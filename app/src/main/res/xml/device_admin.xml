@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- This policy allows the app to prevent its own uninstallation -->
+        <!-- Required to make the app harder to uninstall until goals are complete -->
+        <disable-keyguard-features />
+    </uses-policies>
+</device-admin>
