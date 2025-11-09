@@ -3,6 +3,8 @@ package com.example.wakt.services
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Handler
@@ -10,6 +12,7 @@ import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.core.app.NotificationCompat
 import androidx.lifecycle.lifecycleScope
 import com.example.wakt.data.database.dao.BlockedItemDao
 import com.example.wakt.data.database.dao.GoalBlockDao
@@ -17,6 +20,10 @@ import com.example.wakt.data.database.dao.GoalBlockItemDao
 import com.example.wakt.data.database.entity.BlockType
 import com.example.wakt.data.database.entity.ChallengeType
 import com.example.wakt.presentation.activities.BlockingOverlayActivity
+import com.example.wakt.presentation.activities.BrickBlockingOverlay
+import com.example.wakt.utils.TemporaryUnlock
+import com.example.wakt.utils.BrickSessionManager
+import com.example.wakt.utils.EssentialAppsManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.Job
@@ -33,6 +40,15 @@ class AppBlockingService : AccessibilityService() {
     
     @Inject
     lateinit var goalBlockItemDao: GoalBlockItemDao
+    
+    @Inject
+    lateinit var temporaryUnlock: TemporaryUnlock
+    
+    @Inject
+    lateinit var brickSessionManager: BrickSessionManager
+    
+    @Inject
+    lateinit var essentialAppsManager: EssentialAppsManager
     
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var lastCheckedPackage: String? = null
@@ -110,7 +126,24 @@ class AppBlockingService : AccessibilityService() {
     }
     
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        event?.let { 
+        event?.let {
+            // PRIORITY: Check brick mode for ALL events
+            if (brickSessionManager.isPhoneBricked()) {
+                val packageName = it.packageName?.toString()
+
+                // Always allow our own app
+                if (packageName == applicationContext.packageName) {
+                    return
+                }
+
+                // For any other app during brick mode, check if it's essential
+                if (packageName != null && it.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    Log.d(TAG, "Checking brick mode access for: $packageName")
+                    handleBrickedPhoneAccess(packageName)
+                    return // Don't process normal blocking logic during brick mode
+                }
+            }
+            
             when (it.eventType) {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                     handleWindowStateChanged(it)
@@ -134,10 +167,16 @@ class AppBlockingService : AccessibilityService() {
             return
         }
         
-        // Always check blocked apps, even if it's the same package (app might have been minimized and resumed)
         Log.d(TAG, "Window state changed for package: $packageName")
         
-        // Immediate check for blocked apps
+        // Check if phone is currently bricked - PRIORITY CHECK
+        if (brickSessionManager.isPhoneBricked()) {
+            // Immediate enforcement for brick mode
+            handleBrickedPhoneAccess(packageName)
+            return // Don't process normal blocks during brick mode
+        }
+        
+        // Normal blocking logic for individual apps
         checkIfAppIsBlocked(packageName, forceCheck = false)
     }
     
@@ -150,8 +189,13 @@ class AppBlockingService : AccessibilityService() {
         
         Log.d(TAG, "Window activated for package: $packageName")
         
-        // Force check when window is activated (app comes to foreground)
-        checkIfAppIsBlocked(packageName, forceCheck = true)
+        // Check if phone is currently bricked
+        if (brickSessionManager.isPhoneBricked()) {
+            handleBrickedPhoneAccess(packageName)
+        } else {
+            // Force check when window is activated (app comes to foreground)
+            checkIfAppIsBlocked(packageName, forceCheck = true)
+        }
     }
     
     private fun handleContentChanged(event: AccessibilityEvent) {
@@ -219,6 +263,36 @@ class AppBlockingService : AccessibilityService() {
             "com.android.browser" // Stock browser
         )
         return browserPackages.contains(packageName)
+    }
+    
+    private fun isSystemLauncher(packageName: String?): Boolean {
+        if (packageName == null) return false
+        
+        // Common system launcher packages
+        val systemLaunchers = listOf(
+            "com.android.launcher",
+            "com.android.launcher2",
+            "com.android.launcher3",
+            "com.google.android.apps.nexuslauncher", // Pixel Launcher
+            "com.samsung.android.app.launcher", // Samsung OneUI Home
+            "com.miui.home", // MIUI Launcher
+            "com.huawei.android.launcher", // Huawei Launcher
+            "com.oppo.launcher", // OPPO Launcher
+            "com.oneplus.launcher", // OnePlus Launcher
+            "com.android.settings" // Settings app
+        )
+        
+        return systemLaunchers.any { packageName.startsWith(it) } ||
+               packageName.contains("launcher") && isSystemApp(packageName)
+    }
+    
+    private fun isSystemApp(packageName: String): Boolean {
+        return try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+        } catch (e: Exception) {
+            false
+        }
     }
     
     private fun extractUrlFromBrowser(event: AccessibilityEvent): String? {
@@ -337,6 +411,12 @@ class AppBlockingService : AccessibilityService() {
                 val activeBlock = blockedApp ?: goalBlock
                 
                 if (activeBlock != null) {
+                    // Check if temporarily unlocked
+                    if (temporaryUnlock.isTemporarilyUnlocked(packageName)) {
+                        Log.d(TAG, "App $packageName is temporarily unlocked")
+                        return@launch
+                    }
+                    
                     val isGoalBlock = goalBlock != null
                     Log.d(TAG, "Blocked app detected: $packageName (Goal: $isGoalBlock)")
                     activeBlockedApps.add(packageName)
@@ -428,6 +508,12 @@ class AppBlockingService : AccessibilityService() {
                 val activeBlock = blockedWebsite ?: goalBlock
                 
                 if (activeBlock != null) {
+                    // Check if temporarily unlocked
+                    if (temporaryUnlock.isTemporarilyUnlocked(url)) {
+                        Log.d(TAG, "Website $url is temporarily unlocked")
+                        return@launch
+                    }
+                    
                     val isGoalBlock = goalBlock != null
                     Log.d(TAG, "Blocked website detected: $url (Goal: $isGoalBlock)")
                     
@@ -780,6 +866,180 @@ class AppBlockingService : AccessibilityService() {
     override fun onInterrupt() {
         Log.d(TAG, "AppBlockingService interrupted")
     }
+    
+    /**
+     * Handle app access attempts during a brick session - NOTIFICATION-BASED BLOCKING
+     * NOTE: This check must be synchronous to prevent race conditions
+     */
+    private fun handleBrickedPhoneAccess(packageName: String) {
+        // IMMEDIATE enforcement - synchronous check
+        try {
+            // Always allow our own app package (includes all our activities)
+            if (packageName == applicationContext.packageName) {
+                Log.d(TAG, "Allowing our own app during brick session: $packageName")
+                return
+            }
+
+            // Allow SystemUI for essential system functions
+            if (packageName == "com.android.systemui") {
+                Log.d(TAG, "Allowing SystemUI during brick session")
+                return
+            }
+
+            // Check if this is an essential app allowed during brick sessions
+            val currentSession = brickSessionManager.getCurrentSession()
+            if (currentSession == null) {
+                Log.w(TAG, "No active brick session found, blocking app as precaution: $packageName")
+                blockNonEssentialAppWithNotification(packageName)
+                return
+            }
+
+            // Perform synchronous essential app check using cached data
+            // This uses in-memory cache so it's fast (<1ms)
+            val isEssential = try {
+                // Run on IO thread but block execution (synchronous)
+                val result = java.util.concurrent.atomic.AtomicBoolean(false)
+                val latch = java.util.concurrent.CountDownLatch(1)
+
+                serviceScope.launch(Dispatchers.Default) {
+                    try {
+                        result.set(
+                            essentialAppsManager.isAppEssentialForSessionType(
+                                packageName, currentSession.sessionType
+                            )
+                        )
+                    } finally {
+                        latch.countDown()
+                    }
+                }
+
+                // Wait up to 500ms for result (should be instant with cache)
+                latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                result.get()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error checking essential app status, blocking as fallback", e)
+                false // Default to blocking on error (safer)
+            }
+
+            if (isEssential) {
+                Log.d(TAG, "Allowing essential app during brick session: $packageName")
+                // Log access asynchronously
+                serviceScope.launch {
+                    brickSessionManager.logEssentialAppAccess(packageName)
+                }
+            } else {
+                // Not essential - block it with notification
+                Log.d(TAG, "BLOCKING non-essential app during brick session: $packageName")
+                blockNonEssentialAppWithNotification(packageName)
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in brick enforcement", e)
+            // Even on error, block the app (safer default)
+            blockNonEssentialAppWithNotification(packageName)
+        }
+    }
+    
+    /**
+     * Block a non-essential app during brick mode using notification
+     */
+    private fun blockNonEssentialAppWithNotification(packageName: String) {
+        Log.d(TAG, "BLOCKING non-essential app during brick session: $packageName")
+        
+        try {
+            // Get app name for notification
+            val appName = try {
+                val appInfo = packageManager.getApplicationInfo(packageName, 0)
+                packageManager.getApplicationLabel(appInfo).toString()
+            } catch (e: Exception) {
+                packageName
+            }
+            
+            // Show notification instead of overlay
+            showBrickModeViolationNotification(appName)
+            
+            // Close the app gently - just go back, don't force home or launcher
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            
+            // Log bypass attempt asynchronously
+            serviceScope.launch {
+                brickSessionManager.logBypassAttempt()
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error blocking non-essential app with notification", e)
+            // Fallback - just go back
+            try {
+                performGlobalAction(GLOBAL_ACTION_BACK)
+            } catch (ignored: Exception) {}
+        }
+    }
+    
+    /**
+     * Show a notification when user tries to access blocked app during brick mode
+     */
+    private fun showBrickModeViolationNotification(appName: String) {
+        try {
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            
+            // Create notification channel for brick violations
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    "brick_violation_channel",
+                    "Focus Mode Violations",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Notifications when trying to access blocked apps during focus mode"
+                    enableVibration(false) // Less intrusive
+                    setShowBadge(false)
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+            
+            // Get session info for better context
+            val currentSession = brickSessionManager.getCurrentSession()
+            val sessionName = currentSession?.name ?: "Focus Mode"
+            val timeText = formatRemainingTimeShort()
+            
+            // Create notification
+            val notification = NotificationCompat.Builder(this, "brick_violation_channel")
+                .setContentTitle("🔒 $sessionName Active")
+                .setContentText("$appName blocked • $timeText")
+                .setSmallIcon(android.R.drawable.ic_lock_lock)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setTimeoutAfter(3000) // Auto-dismiss after 3 seconds
+                .build()
+                
+            // Show notification with unique ID based on app name
+            notificationManager.notify(appName.hashCode(), notification)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error showing brick mode violation notification", e)
+        }
+    }
+    
+    private fun formatRemainingTimeShort(): String {
+        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
+        val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes() ?: 0
+        
+        return when {
+            remainingMinutes >= 60 -> {
+                val hours = remainingMinutes / 60
+                val mins = remainingMinutes % 60
+                if (mins > 0) "${hours}h ${mins}m left" else "${hours}h left"
+            }
+            remainingMinutes > 1 -> "${remainingMinutes}m left"
+            remainingMinutes == 1 -> {
+                val seconds = remainingSeconds % 60
+                if (seconds > 0) "${remainingMinutes}m ${seconds}s left" else "1m left"
+            }
+            remainingSeconds > 0 -> "${remainingSeconds}s left"
+            else -> "Ending now"
+        }
+    }
+    
     
     override fun onDestroy() {
         super.onDestroy()

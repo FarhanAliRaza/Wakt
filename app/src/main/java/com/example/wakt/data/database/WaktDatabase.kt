@@ -8,13 +8,26 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.wakt.data.database.dao.BlockedItemDao
 import com.example.wakt.data.database.dao.GoalBlockDao
 import com.example.wakt.data.database.dao.GoalBlockItemDao
+import com.example.wakt.data.database.dao.PhoneBrickSessionDao
+import com.example.wakt.data.database.dao.EssentialAppDao
+import com.example.wakt.data.database.dao.BrickSessionLogDao
 import com.example.wakt.data.database.entity.BlockedItem
 import com.example.wakt.data.database.entity.GoalBlock
 import com.example.wakt.data.database.entity.GoalBlockItem
+import com.example.wakt.data.database.entity.PhoneBrickSession
+import com.example.wakt.data.database.entity.EssentialApp
+import com.example.wakt.data.database.entity.BrickSessionLog
 
 @Database(
-    entities = [BlockedItem::class, GoalBlock::class, GoalBlockItem::class],
-    version = 4,
+    entities = [
+        BlockedItem::class, 
+        GoalBlock::class, 
+        GoalBlockItem::class,
+        PhoneBrickSession::class,
+        EssentialApp::class,
+        BrickSessionLog::class
+    ],
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -22,6 +35,9 @@ abstract class WaktDatabase : RoomDatabase() {
     abstract fun blockedItemDao(): BlockedItemDao
     abstract fun goalBlockDao(): GoalBlockDao
     abstract fun goalBlockItemDao(): GoalBlockItemDao
+    abstract fun phoneBrickSessionDao(): PhoneBrickSessionDao
+    abstract fun essentialAppDao(): EssentialAppDao
+    abstract fun brickSessionLogDao(): BrickSessionLogDao
     
     companion object {
         val MIGRATION_2_3 = object : Migration(2, 3) {
@@ -67,6 +83,69 @@ abstract class WaktDatabase : RoomDatabase() {
                     SELECT id, packageNameOrUrl, type, packageNameOrUrl, createdAt
                     FROM goal_blocks
                     WHERE packageNameOrUrl IS NOT NULL AND packageNameOrUrl != ''
+                """)
+            }
+        }
+        
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Create phone_brick_sessions table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS phone_brick_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        name TEXT NOT NULL,
+                        sessionType TEXT NOT NULL,
+                        durationMinutes INTEGER,
+                        startHour INTEGER,
+                        startMinute INTEGER,
+                        endHour INTEGER,
+                        endMinute INTEGER,
+                        activeDaysOfWeek TEXT NOT NULL DEFAULT '1234567',
+                        isActive INTEGER NOT NULL DEFAULT 1,
+                        isCurrentlyBricked INTEGER NOT NULL DEFAULT 0,
+                        currentSessionStartTime INTEGER,
+                        currentSessionEndTime INTEGER,
+                        totalSessionsCompleted INTEGER NOT NULL DEFAULT 0,
+                        totalSessionsBroken INTEGER NOT NULL DEFAULT 0,
+                        lastCompletedAt INTEGER,
+                        createdAt INTEGER NOT NULL,
+                        challengeType TEXT NOT NULL DEFAULT 'WAIT',
+                        challengeData TEXT NOT NULL DEFAULT '5',
+                        allowEmergencyOverride INTEGER NOT NULL DEFAULT 1
+                    )
+                """)
+                
+                // Create essential_apps table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS essential_apps (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        appName TEXT NOT NULL,
+                        packageName TEXT NOT NULL,
+                        isSystemEssential INTEGER NOT NULL DEFAULT 0,
+                        isUserAdded INTEGER NOT NULL DEFAULT 1,
+                        allowedSessionTypes TEXT NOT NULL DEFAULT 'FOCUS_SESSION,SLEEP_SCHEDULE,DIGITAL_DETOX',
+                        addedAt INTEGER NOT NULL,
+                        isActive INTEGER NOT NULL DEFAULT 1
+                    )
+                """)
+                
+                // Create brick_session_logs table
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS brick_session_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        sessionId INTEGER NOT NULL,
+                        sessionStartTime INTEGER NOT NULL,
+                        sessionEndTime INTEGER,
+                        scheduledDurationMinutes INTEGER NOT NULL,
+                        actualDurationMinutes INTEGER,
+                        completionStatus TEXT NOT NULL,
+                        emergencyOverrideUsed INTEGER NOT NULL DEFAULT 0,
+                        emergencyOverrideTime INTEGER,
+                        emergencyOverrideReason TEXT,
+                        bypassAttempts INTEGER NOT NULL DEFAULT 0,
+                        appsAccessedDuringSession TEXT NOT NULL DEFAULT '',
+                        createdAt INTEGER NOT NULL
+                    )
                 """)
             }
         }

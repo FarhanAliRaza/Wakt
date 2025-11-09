@@ -8,6 +8,9 @@ import com.example.wakt.data.database.WaktDatabase
 import com.example.wakt.data.database.dao.BlockedItemDao
 import com.example.wakt.data.database.dao.GoalBlockDao
 import com.example.wakt.data.database.dao.GoalBlockItemDao
+import com.example.wakt.data.database.dao.PhoneBrickSessionDao
+import com.example.wakt.data.database.dao.EssentialAppDao
+import com.example.wakt.data.database.dao.BrickSessionLogDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -35,7 +38,7 @@ object DatabaseModule {
             WaktDatabase::class.java,
             "wakt_database"
         )
-        .addMigrations(MIGRATION_1_2, WaktDatabase.MIGRATION_2_3, WaktDatabase.MIGRATION_3_4)
+        .addMigrations(MIGRATION_1_2, WaktDatabase.MIGRATION_2_3, WaktDatabase.MIGRATION_3_4, WaktDatabase.MIGRATION_4_5)
         .fallbackToDestructiveMigration() // For development, remove in production
         .build()
     }
@@ -53,5 +56,20 @@ object DatabaseModule {
     @Provides
     fun provideGoalBlockItemDao(database: WaktDatabase): GoalBlockItemDao {
         return database.goalBlockItemDao()
+    }
+    
+    @Provides
+    fun providePhoneBrickSessionDao(database: WaktDatabase): PhoneBrickSessionDao {
+        return database.phoneBrickSessionDao()
+    }
+    
+    @Provides
+    fun provideEssentialAppDao(database: WaktDatabase): EssentialAppDao {
+        return database.essentialAppDao()
+    }
+    
+    @Provides
+    fun provideBrickSessionLogDao(database: WaktDatabase): BrickSessionLogDao {
+        return database.brickSessionLogDao()
     }
 }

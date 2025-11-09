@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import com.example.wakt.presentation.ui.theme.WaktGradient
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -38,6 +39,7 @@ import android.widget.Toast
 fun HomeScreen(
     onNavigateToAddBlock: () -> Unit,
     onNavigateToGoals: () -> Unit = {},
+    onNavigateToPhoneBrick: () -> Unit = {},
     // VPN permission request removed for battery optimization
     // onVpnPermissionRequest: ((callback: () -> Unit) -> Unit)? = null,
     viewModel: HomeViewModel = hiltViewModel()
@@ -129,6 +131,12 @@ fun HomeScreen(
             // Long-term Goals banner button
             LongTermGoalsBanner(
                 onClick = onNavigateToGoals,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+            )
+            
+            // Phone Brick banner button
+            PhoneBrickBanner(
+                onClick = onNavigateToPhoneBrick,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
             
@@ -434,6 +442,50 @@ fun LongTermGoalsBanner(
                 Icons.Default.ArrowForward,
                 contentDescription = "Open Long-term Goals",
                 tint = Color.White,
+                modifier = Modifier.size(24.dp)
+            )
+        }
+    }
+}
+
+@Composable
+fun PhoneBrickBanner(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "📱 Phone Brick",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Complete phone lock • Focus sessions • Sleep schedules",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                )
+            }
+            
+            Icon(
+                Icons.Default.ArrowForward,
+                contentDescription = "Open Phone Brick",
+                tint = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.size(24.dp)
             )
         }

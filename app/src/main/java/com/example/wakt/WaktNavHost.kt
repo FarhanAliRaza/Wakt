@@ -8,6 +8,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.example.wakt.presentation.screens.addblock.AddBlockScreen
 import com.example.wakt.presentation.screens.home.HomeScreen
+import com.example.wakt.presentation.screens.phonebrick.PhoneBrickScreen
 import com.example.wakt.ui.goals.GoalBlockScreen
 
 @Composable
@@ -29,6 +30,9 @@ fun WaktNavHost(
                 },
                 onNavigateToGoals = {
                     navController.navigate("goal_blocks")
+                },
+                onNavigateToPhoneBrick = {
+                    navController.navigate("phone_brick")
                 }
                 // VPN permission request removed for battery optimization
                 // onVpnPermissionRequest = onVpnPermissionRequest
@@ -45,6 +49,14 @@ fun WaktNavHost(
         
         composable("goal_blocks") {
             GoalBlockScreen()
+        }
+        
+        composable("phone_brick") {
+            PhoneBrickScreen(
+                onNavigateBack = {
+                    navController.popBackStack()
+                }
+            )
         }
     }
 }

@@ -1,0 +1,35 @@
+package com.example.wakt.data.database.entity
+
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+
+@Entity(tableName = "phone_brick_sessions")
+data class PhoneBrickSession(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val name: String,
+    val sessionType: BrickSessionType,
+    val durationMinutes: Int? = null, // For duration-based sessions
+    val startHour: Int? = null, // For time-window sessions (0-23)
+    val startMinute: Int? = null, // For time-window sessions (0-59)
+    val endHour: Int? = null, // For time-window sessions (0-23) 
+    val endMinute: Int? = null, // For time-window sessions (0-59)
+    val activeDaysOfWeek: String = "1234567", // "1234567" = Mon-Sun, "23456" = Tue-Sat
+    val isActive: Boolean = true,
+    val isCurrentlyBricked: Boolean = false,
+    val currentSessionStartTime: Long? = null, // When current session started
+    val currentSessionEndTime: Long? = null, // When current session should end
+    val totalSessionsCompleted: Int = 0,
+    val totalSessionsBroken: Int = 0, // Emergency overrides
+    val lastCompletedAt: Long? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val challengeType: ChallengeType = ChallengeType.WAIT,
+    val challengeData: String = "5", // Minutes to wait for emergency override
+    val allowEmergencyOverride: Boolean = true // Always enabled for safety
+)
+
+enum class BrickSessionType {
+    FOCUS_SESSION, // Duration-based (10 min - 4 hours)
+    SLEEP_SCHEDULE, // Time-window based (e.g., 11 PM - 6 AM daily)
+    DIGITAL_DETOX // Extended duration-based (4-24 hours)
+}

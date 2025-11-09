@@ -20,6 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.wakt.utils.TemporaryUnlock
 import com.example.wakt.data.database.entity.ChallengeType
 import com.example.wakt.presentation.activities.viewmodel.BlockingOverlayViewModel
 import com.example.wakt.presentation.activities.viewmodel.BlockingOverlayUiState
@@ -28,6 +29,7 @@ import com.example.wakt.presentation.ui.theme.WaktGradient
 import com.example.wakt.services.AppBlockingService
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class BlockingOverlayActivity : ComponentActivity() {
@@ -36,6 +38,9 @@ class BlockingOverlayActivity : ComponentActivity() {
     private var websiteUrl: String? = null
     private var packageName: String? = null
     private var hasTriggeredDismissal = false  // Track if we've already handled dismissal
+    
+    @Inject
+    lateinit var temporaryUnlock: TemporaryUnlock
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,7 +77,9 @@ class BlockingOverlayActivity : ComponentActivity() {
                     isGoalBlock = isGoalBlock,
                     challengeType = challengeType,
                     challengeData = challengeData,
-                    onUnblockComplete = { 
+                    onUnblockComplete = { minutes ->
+                        val identifier = if (isWebsiteBlock) websiteUrl ?: packageName!! else packageName!!
+                        temporaryUnlock.createTemporaryUnlock(identifier, minutes)
                         handleDismissal()
                         finish() 
                     },
@@ -114,7 +121,7 @@ fun BlockingOverlayScreen(
     isGoalBlock: Boolean = false,
     challengeType: ChallengeType,
     challengeData: String,
-    onUnblockComplete: () -> Unit,
+    onUnblockComplete: (Int) -> Unit,
     onCancel: () -> Unit,
     viewModel: BlockingOverlayViewModel = hiltViewModel()
 ) {
@@ -203,14 +210,18 @@ fun BlockingOverlayScreen(
                     ChallengeType.WAIT -> {
                         WaitTimerChallenge(
                             uiState = uiState,
-                            onTimeComplete = onUnblockComplete,
-                            onRequestAccess = { viewModel.requestAccess() }
+                            onTimeComplete = { onUnblockComplete(5) }, // Default 5 minutes
+                            onRequestAccess = { viewModel.requestAccess() },
+                            onUnlockWithTime = onUnblockComplete,
+                            isGoalBlock = isGoalBlock
                         )
                     }
                     ChallengeType.CLICK_500 -> {
                         Click500Challenge(
-                            onChallengeComplete = onUnblockComplete,
-                            viewModel = viewModel
+                            onChallengeComplete = { onUnblockComplete(5) }, // Default 5 minutes
+                            onUnlockWithTime = onUnblockComplete,
+                            viewModel = viewModel,
+                            isGoalBlock = isGoalBlock
                         )
                     }
 
@@ -230,20 +241,7 @@ fun BlockingOverlayScreen(
                         Text("Cancel")
                     }
                     
-                    if (challengeType == ChallengeType.WAIT && uiState.timerCompleted) {
-                        Button(
-                            onClick = onUnblockComplete,
-                            modifier = Modifier
-                                .weight(1f)
-                                .background(
-                                    brush = WaktGradient,
-                                    shape = RoundedCornerShape(8.dp)
-                                ),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
-                        ) {
-                            Text("Continue", color = Color.White)
-                        }
-                    }
+                    // Remove the old continue button - now handled in the challenge components
                 }
             }
         }
@@ -254,7 +252,9 @@ fun BlockingOverlayScreen(
 private fun WaitTimerChallenge(
     uiState: BlockingOverlayUiState,
     onTimeComplete: () -> Unit,
-    onRequestAccess: () -> Unit
+    onRequestAccess: () -> Unit,
+    onUnlockWithTime: (Int) -> Unit,
+    isGoalBlock: Boolean = false
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -337,19 +337,10 @@ private fun WaitTimerChallenge(
             }
             
             uiState.timerCompleted -> {
-                // Timer completed
-                Text(
-                    text = "Time's up! You can now access the app.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary
+                // Timer completed - show time selection
+                ChallengeCompletedScreen(
+                    onUnlockWithTime = onUnlockWithTime,
+                    isGoalBlock = isGoalBlock
                 )
             }
         }
@@ -360,7 +351,9 @@ private fun WaitTimerChallenge(
 @Composable
 private fun Click500Challenge(
     onChallengeComplete: () -> Unit,
-    viewModel: BlockingOverlayViewModel
+    onUnlockWithTime: (Int) -> Unit,
+    viewModel: BlockingOverlayViewModel,
+    isGoalBlock: Boolean = false
 ) {
     val uiState by viewModel.uiState.collectAsState()
     
@@ -421,11 +414,9 @@ private fun Click500Challenge(
         }
         
         if (uiState.clickCount >= 500) {
-            Text(
-                text = "Challenge completed! You can now access the blocked content.",
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-                color = MaterialTheme.colorScheme.primary
+            ChallengeCompletedScreen(
+                onUnlockWithTime = onUnlockWithTime,
+                isGoalBlock = isGoalBlock
             )
         } else {
             val remaining = 500 - uiState.clickCount
@@ -433,6 +424,126 @@ private fun Click500Challenge(
                 text = "$remaining clicks remaining",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun ChallengeCompletedScreen(
+    onUnlockWithTime: (Int) -> Unit,
+    isGoalBlock: Boolean = false
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Text(
+            text = "Challenge Completed! 🎉",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+        
+        Text(
+            text = if (isGoalBlock) {
+                "Select how long you'd like temporary access:"
+            } else {
+                "Great job! Select how long you'd like access:"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        // Time selection buttons
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            TimeSelectionButton(
+                text = "5 Minutes",
+                subtitle = "Quick access",
+                onClick = { onUnlockWithTime(5) },
+                isPrimary = true
+            )
+            
+            TimeSelectionButton(
+                text = "10 Minutes",
+                subtitle = "Moderate access",
+                onClick = { onUnlockWithTime(10) }
+            )
+            
+            TimeSelectionButton(
+                text = "20 Minutes",
+                subtitle = if (isGoalBlock) "Extended access" else "Extended access",
+                onClick = { onUnlockWithTime(20) }
+            )
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Text(
+            text = if (isGoalBlock) {
+                "⚠️ Remember: This is temporary access for your long-term goal"
+            } else {
+                "💡 Use this time wisely - blocking will resume afterward"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun TimeSelectionButton(
+    text: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    isPrimary: Boolean = false
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        onClick = onClick,
+        colors = if (isPrimary) {
+            CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            )
+        } else {
+            CardDefaults.cardColors()
+        },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isPrimary) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                }
+            )
+            
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (isPrimary) {
+                    MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
         }
     }

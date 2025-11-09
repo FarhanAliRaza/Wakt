@@ -15,6 +15,7 @@ import com.example.wakt.data.database.dao.BlockedItemDao
 import com.example.wakt.data.database.dao.GoalBlockDao
 import com.example.wakt.data.database.dao.GoalBlockItemDao
 import com.example.wakt.data.database.entity.BlockType
+import com.example.wakt.utils.TemporaryUnlock
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -28,6 +29,7 @@ class WebsiteBlockingVpnService : VpnService() {
     @Inject lateinit var blockedItemDao: BlockedItemDao
     @Inject lateinit var goalBlockDao: GoalBlockDao
     @Inject lateinit var goalBlockItemDao: GoalBlockItemDao
+    @Inject lateinit var temporaryUnlock: TemporaryUnlock
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var vpnThread: Thread? = null
@@ -158,8 +160,15 @@ class WebsiteBlockingVpnService : VpnService() {
                             .toSet()
             
             // Combine all sets
-            blockedWebsites = regularWebsites + goalItemWebsites + oldGoalWebsites
-            Log.d(TAG, "Loaded ${blockedWebsites.size} blocked websites (${regularWebsites.size} regular, ${goalItemWebsites.size} goal items, ${oldGoalWebsites.size} old goals): $blockedWebsites")
+            val allBlockedWebsites = regularWebsites + goalItemWebsites + oldGoalWebsites
+            
+            // Filter out temporarily unlocked websites
+            blockedWebsites = allBlockedWebsites.filter { domain ->
+                !temporaryUnlock.isTemporarilyUnlocked(domain)
+            }.toSet()
+            
+            val unlockedCount = allBlockedWebsites.size - blockedWebsites.size
+            Log.d(TAG, "Loaded ${blockedWebsites.size} blocked websites (${regularWebsites.size} regular, ${goalItemWebsites.size} goal items, ${oldGoalWebsites.size} old goals, ${unlockedCount} temporarily unlocked): $blockedWebsites")
 
             // Battery optimization: Stop VPN if no websites to block
             if (blockedWebsites.isEmpty()) {
