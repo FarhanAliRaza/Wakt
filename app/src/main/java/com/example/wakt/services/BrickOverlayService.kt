@@ -39,11 +39,18 @@ class BrickOverlayService : Service() {
     private var overlayView: FrameLayout? = null
     private var isOverlayShowing = false
     private var updateJob: Job? = null
+    private var sessionMonitorJob: Job? = null
 
     companion object {
         private const val TAG = "BrickOverlayService"
         private const val NOTIFICATION_ID = 2002
         private const val CHANNEL_ID = "brick_overlay_channel"
+
+        // Singleton reference for external access to temporarily hide/show overlay
+        private var instance: BrickOverlayService? = null
+
+        // Flag to suspend overlay during emergency activities
+        private var isEmergencySuspended = false
 
         fun start(context: Context) {
             val intent = Intent(context, BrickOverlayService::class.java)
@@ -67,6 +74,30 @@ class BrickOverlayService : Service() {
             context.stopService(intent)
             Log.d(TAG, "BrickOverlayService stopped")
         }
+
+        fun hideOverlay() {
+            instance?.hideOverlay()
+            Log.d(TAG, "Overlay hidden by enforcement service")
+        }
+
+        fun showOverlay() {
+            instance?.showOverlay()
+            Log.d(TAG, "Overlay shown by enforcement service")
+        }
+
+        fun suspendForEmergency() {
+            isEmergencySuspended = true
+            instance?.hideOverlay()
+            Log.d(TAG, "Overlay suspended for emergency activity")
+        }
+
+        fun resumeAfterEmergency() {
+            isEmergencySuspended = false
+            instance?.showOverlay()
+            Log.d(TAG, "Overlay resumed after emergency activity")
+        }
+
+        fun isEmergencySuspended(): Boolean = isEmergencySuspended
     }
 
     override fun onCreate() {
@@ -74,6 +105,7 @@ class BrickOverlayService : Service() {
         Log.d(TAG, "BrickOverlayService created")
         createNotificationChannel()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        instance = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -165,6 +197,12 @@ class BrickOverlayService : Service() {
             return
         }
 
+        // Don't show overlay if suspended for emergency activities
+        if (isEmergencySuspended) {
+            Log.d(TAG, "Overlay suspended for emergency activity - not showing")
+            return
+        }
+
         // Check if overlay permission is granted
         if (!Settings.canDrawOverlays(this)) {
             Log.e(TAG, "CRITICAL: Overlay permission not granted - cannot show overlay")
@@ -213,6 +251,9 @@ class BrickOverlayService : Service() {
             // Start update loop for time remaining
             startOverlayUpdateLoop()
 
+            // Start session monitoring - CRITICAL: Hide overlay when session ends
+            startSessionMonitoring()
+
         } catch (e: Exception) {
             Log.e(TAG, "Error showing overlay", e)
             isOverlayShowing = false
@@ -222,29 +263,32 @@ class BrickOverlayService : Service() {
     private fun buildOverlayContent(): LinearLayout {
         val currentSession = brickSessionManager.getCurrentSession()
 
+        // Main container - aligned at top with proper spacing
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(24, 32, 24, 32)
+            gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP
+            setPadding(24, 40, 24, 24)
         }
 
-        // Lock icon text
+        // Lock icon - larger and more prominent
         val lockIcon = TextView(this).apply {
             text = "🔒"
-            textSize = 64f
+            textSize = 80f
             gravity = Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            )
+            ).apply {
+                bottomMargin = 24
+            }
         }
         container.addView(lockIcon)
 
-        // Session info card
+        // Session info card - improved styling
         if (currentSession != null) {
             val sessionCard = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -252,46 +296,38 @@ class BrickOverlayService : Service() {
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
-                    topMargin = 16
-                    bottomMargin = 16
+                    bottomMargin = 40
                 }
-                setBackgroundColor(android.graphics.Color.parseColor("#FF424242"))
-                setPadding(16, 16, 16, 16)
+                setBackgroundColor(android.graphics.Color.parseColor("#FF1F1F1F"))
+                setPadding(20, 24, 20, 24)
+                gravity = Gravity.CENTER_HORIZONTAL
             }
 
-            val sessionName = TextView(this).apply {
-                text = currentSession.name
-                textSize = 18f
-                setTextColor(android.graphics.Color.WHITE)
-                gravity = Gravity.CENTER
-            }
-            sessionCard.addView(sessionName)
-
+            // Combined time display
             val timeRemaining = TextView(this).apply {
                 text = formatSessionTime()
-                textSize = 14f
-                setTextColor(android.graphics.Color.parseColor("#FFBBBBBB"))
+                textSize = 24f
+                setTextColor(android.graphics.Color.parseColor("#FFFF6B6B"))
                 gravity = Gravity.CENTER
+                typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = 8
-                }
+                )
             }
             sessionCard.addView(timeRemaining)
 
             container.addView(sessionCard)
         }
 
-        // Add scroll view for essentials and buttons
+        // Add scroll view for essentials and buttons - takes remaining space
         val scrollView = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
-            ).apply {
-                weight = 1f
-            }
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f // Weight to take remaining space
+            )
+            isVerticalScrollBarEnabled = false
         }
 
         val scrollContent = LinearLayout(this).apply {
@@ -300,159 +336,80 @@ class BrickOverlayService : Service() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.WRAP_CONTENT
             )
-            setPadding(0, 16, 0, 16)
+            setPadding(16, 16, 16, 16)
         }
 
-        // Essential apps section - will be populated if available
-        // Note: We can't use runBlocking in service context, so we'll create an empty list for now
-        // and could add async loading if needed
-        val essentialApps: List<com.example.wakt.data.database.entity.EssentialApp> = emptyList()
+        // Load essential apps asynchronously and add to overlay
+        loadAndDisplayEssentialApps(scrollContent)
 
-        // TODO: Add async loading of essential apps if needed
-        if (essentialApps.isNotEmpty()) {
-            val essentialsLabel = TextView(this).apply {
-                text = "Essential Apps"
-                textSize = 14f
-                setTextColor(android.graphics.Color.WHITE)
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    bottomMargin = 8
-                }
-            }
-            scrollContent.addView(essentialsLabel)
-
-            val gridContainer = GridLayout(this).apply {
-                rowCount = (essentialApps.size + 3) / 4
-                columnCount = 4
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            }
-
-            essentialApps.forEach { app ->
-                val appButton = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    gravity = Gravity.CENTER
-                    layoutParams = GridLayout.LayoutParams().apply {
-                        width = 0
-                        height = LinearLayout.LayoutParams.WRAP_CONTENT
-                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
-                        setMargins(4, 4, 4, 4)
-                    }
-                    isClickable = true
-                    isFocusable = true
-                    setOnClickListener {
-                        launchApp(app.packageName)
-                    }
-                }
-
-                // App icon placeholder (first letter)
-                val appIcon = TextView(this).apply {
-                    text = app.appName.firstOrNull()?.toString()?.uppercase() ?: "?"
-                    textSize = 16f
-                    setTextColor(android.graphics.Color.WHITE)
-                    gravity = Gravity.CENTER
-                    setBackgroundColor(android.graphics.Color.parseColor("#FF5555FF"))
-                    layoutParams = LinearLayout.LayoutParams(48, 48)
-                }
-                appButton.addView(appIcon)
-
-                // App name
-                val appNameView = TextView(this).apply {
-                    text = app.appName
-                    textSize = 10f
-                    setTextColor(android.graphics.Color.WHITE)
-                    gravity = Gravity.CENTER
-                    layoutParams = LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        LinearLayout.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        topMargin = 4
-                    }
-                    maxLines = 2
-                }
-                appButton.addView(appNameView)
-
-                gridContainer.addView(appButton)
-            }
-
-            scrollContent.addView(gridContainer)
-        }
-
-        // Emergency access button
-        if (currentSession?.allowEmergencyOverride == true) {
-            val emergencyButton = Button(this).apply {
-                text = "⚠️ Emergency Access"
-                setTextColor(android.graphics.Color.WHITE)
-                setBackgroundColor(android.graphics.Color.parseColor("#FFEE5555"))
-                textSize = 16f
-                setPadding(16, 12, 16, 12)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    60
-                ).apply {
-                    topMargin = 16
-                    leftMargin = 0
-                    rightMargin = 0
-                }
-                isAllCaps = false
-                setOnClickListener {
-                    Log.d(TAG, "Emergency Access button clicked")
-                    serviceScope.launch {
-                        delay(100) // Brief delay to allow overlay to release
-                        try {
-                            val intent = Intent(this@BrickOverlayService, EmergencyOverrideActivity::class.java).apply {
-                                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                            }
-                            startActivity(intent)
-                            Log.d(TAG, "Emergency Access activity launched")
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error launching Emergency Access", e)
-                        }
-                    }
-                }
-            }
-            scrollContent.addView(emergencyButton)
-        }
-
-        // Emergency call button
-        val callButton = Button(this).apply {
-            text = "📞 Emergency Call"
-            setTextColor(android.graphics.Color.WHITE)
-            setBackgroundColor(android.graphics.Color.parseColor("#FFDD3333"))
-            textSize = 16f
-            setPadding(16, 12, 16, 12)
+        // Button container - wrapped for proper centering
+        val buttonContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                60
-            ).apply {
-                topMargin = 8
-                bottomMargin = 16
-                leftMargin = 0
-                rightMargin = 0
-            }
-            isAllCaps = false
-            setOnClickListener {
-                Log.d(TAG, "Emergency Call button clicked")
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(8, 16, 8, 16)
+        }
+
+        // Emergency access button - using custom view to avoid FLAG_NOT_FOCUSABLE text clipping
+        if (currentSession?.allowEmergencyOverride == true) {
+            val emergencyButton = createCustomButton(
+                text = "⚠️ Emergency Access",
+                backgroundColor = "#FFEF5350",
+                marginBottom = 12
+            ) {
+                Log.d(TAG, "Emergency Access button clicked")
+                suspendForEmergency()
                 serviceScope.launch {
-                    delay(100) // Brief delay to allow overlay to release
+                    delay(100)
                     try {
-                        val dialerIntent = Intent(Intent.ACTION_DIAL).apply {
+                        val intent = Intent(this@BrickOverlayService, EmergencyOverrideActivity::class.java).apply {
                             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                         }
-                        startActivity(dialerIntent)
-                        Log.d(TAG, "Dialer intent launched")
+                        startActivity(intent)
+                        Log.d(TAG, "Emergency Access activity launched")
                     } catch (e: Exception) {
-                        Log.e(TAG, "Error launching dialer", e)
+                        Log.e(TAG, "Error launching Emergency Access", e)
+                        resumeAfterEmergency()
                     }
                 }
             }
+            buttonContainer.addView(emergencyButton)
         }
-        scrollContent.addView(callButton)
+
+        // Emergency call button - using custom view to avoid FLAG_NOT_FOCUSABLE text clipping
+        val callButton = createCustomButton(
+            text = "📞 Emergency Call",
+            backgroundColor = "#FFE53935",
+            marginBottom = 0
+        ) {
+            Log.d(TAG, "Emergency Call button clicked")
+            suspendForEmergency()
+            serviceScope.launch {
+                delay(100)
+                try {
+                    val dialerIntent = Intent(Intent.ACTION_DIAL).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    }
+                    startActivity(dialerIntent)
+                    Log.d(TAG, "Dialer intent launched")
+                    delay(10000)
+                    if (brickSessionManager.isPhoneBricked()) {
+                        resumeAfterEmergency()
+                        Log.d(TAG, "Overlay resumed after dialer use")
+                    } else {
+                        resumeAfterEmergency()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error launching dialer", e)
+                    resumeAfterEmergency()
+                }
+            }
+        }
+        buttonContainer.addView(callButton)
+        scrollContent.addView(buttonContainer)
 
         scrollView.addView(scrollContent)
         container.addView(scrollView)
@@ -492,6 +449,35 @@ class BrickOverlayService : Service() {
         }
     }
 
+    /**
+     * CRITICAL: Monitor if brick session is still active
+     * Hide overlay immediately when session ends - regardless of suspension state
+     */
+    private fun startSessionMonitoring() {
+        sessionMonitorJob?.cancel()
+        sessionMonitorJob = serviceScope.launch {
+            while (isActive && isOverlayShowing) {
+                try {
+                    // Check every 500ms if brick session is still active
+                    if (!brickSessionManager.isPhoneBricked()) {
+                        Log.d(TAG, "CRITICAL: Brick session ended - hiding overlay immediately")
+                        // Session ended - hide overlay no matter what (even if suspended)
+                        hideOverlay()
+                        // Clear suspension flag when session ends
+                        isEmergencySuspended = false
+                        // Stop the service
+                        stopSelf()
+                        break
+                    }
+                    delay(500)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error monitoring session", e)
+                    delay(500)
+                }
+            }
+        }
+    }
+
     private fun hideOverlay() {
         try {
             if (overlayView != null && windowManager != null) {
@@ -499,6 +485,7 @@ class BrickOverlayService : Service() {
                 overlayView = null
                 isOverlayShowing = false
                 updateJob?.cancel()
+                sessionMonitorJob?.cancel()
                 Log.d(TAG, "Overlay hidden")
             }
         } catch (e: Exception) {
@@ -511,7 +498,13 @@ class BrickOverlayService : Service() {
             val intent = packageManager.getLaunchIntentForPackage(packageName)
             if (intent != null) {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+                // Hide overlay immediately to let app come to foreground
+                hideOverlay()
+                Log.d(TAG, "Hidden overlay to launch allowed app: $packageName")
+
                 startActivity(intent)
+                Log.d(TAG, "Launched allowed app: $packageName")
 
                 // Log app access
                 serviceScope.launch {
@@ -558,11 +551,170 @@ class BrickOverlayService : Service() {
         }
     }
 
+    /**
+     * Load session-specific allowed apps asynchronously and add them to the overlay
+     * Gets the allowed apps from the current session's allowedApps field
+     */
+    private fun loadAndDisplayEssentialApps(scrollContent: LinearLayout) {
+        serviceScope.launch {
+            try {
+                // Get the current session and its allowed apps
+                val currentSession = brickSessionManager.getCurrentSession()
+
+                if (currentSession != null && currentSession.allowedApps.isNotEmpty()) {
+                    // Parse the comma-separated list of package names
+                    val packageNames = currentSession.allowedApps
+                        .split(",")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+
+                    if (packageNames.isNotEmpty()) {
+                        // Create label
+                        val essentialsLabel = TextView(this@BrickOverlayService).apply {
+                            text = "Allowed Apps"
+                            textSize = 14f
+                            setTextColor(android.graphics.Color.WHITE)
+                            gravity = Gravity.CENTER
+                            layoutParams = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).apply {
+                                bottomMargin = 8
+                            }
+                            typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+                        }
+                        scrollContent.addView(essentialsLabel, 0) // Add at top
+
+                        // Create grid container
+                        val gridContainer = GridLayout(this@BrickOverlayService).apply {
+                            rowCount = (packageNames.size + 3) / 4
+                            columnCount = 4
+                            layoutParams = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            ).apply {
+                                bottomMargin = 16
+                            }
+                        }
+
+                        // Load app info for each package name from PackageManager
+                        for (packageName in packageNames) {
+                            try {
+                                val appInfo = packageManager.getApplicationInfo(packageName, 0)
+                                val appName = packageManager.getApplicationLabel(appInfo).toString()
+
+                                val appButton = LinearLayout(this@BrickOverlayService).apply {
+                                    orientation = LinearLayout.VERTICAL
+                                    gravity = Gravity.CENTER
+                                    layoutParams = GridLayout.LayoutParams().apply {
+                                        width = 0
+                                        height = LinearLayout.LayoutParams.WRAP_CONTENT
+                                        columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                                        setMargins(4, 4, 4, 4)
+                                    }
+                                    isClickable = true
+                                    isFocusable = true
+                                    setOnClickListener {
+                                        launchApp(packageName)
+                                    }
+                                }
+
+                                // App icon placeholder (first letter)
+                                val appIcon = TextView(this@BrickOverlayService).apply {
+                                    text = appName.firstOrNull()?.toString()?.uppercase() ?: "?"
+                                    textSize = 16f
+                                    setTextColor(android.graphics.Color.WHITE)
+                                    gravity = Gravity.CENTER
+                                    setBackgroundColor(android.graphics.Color.parseColor("#FF5555FF"))
+                                    layoutParams = LinearLayout.LayoutParams(48, 48)
+                                }
+                                appButton.addView(appIcon)
+
+                                // App name
+                                val appNameView = TextView(this@BrickOverlayService).apply {
+                                    text = appName
+                                    textSize = 10f
+                                    setTextColor(android.graphics.Color.WHITE)
+                                    gravity = Gravity.CENTER
+                                    layoutParams = LinearLayout.LayoutParams(
+                                        LinearLayout.LayoutParams.MATCH_PARENT,
+                                        LinearLayout.LayoutParams.WRAP_CONTENT
+                                    ).apply {
+                                        topMargin = 4
+                                    }
+                                    maxLines = 2
+                                }
+                                appButton.addView(appNameView)
+
+                                gridContainer.addView(appButton)
+                            } catch (e: Exception) {
+                                Log.d(TAG, "Could not load app info for $packageName: ${e.message}")
+                            }
+                        }
+
+                        scrollContent.addView(gridContainer, 1) // Add after label
+                        Log.d(TAG, "Loaded ${packageNames.size} session-specific allowed apps")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading allowed apps", e)
+            }
+        }
+    }
+
+    /**
+     * Creates a custom button view using LinearLayout + TextView to properly render text
+     * This avoids rendering issues with Button widget under FLAG_NOT_FOCUSABLE
+     */
+    private fun createCustomButton(
+        text: String,
+        backgroundColor: String,
+        marginBottom: Int,
+        onClick: () -> Unit
+    ): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = marginBottom
+                leftMargin = 16
+                rightMargin = 16
+            }
+            setBackgroundColor(android.graphics.Color.parseColor(backgroundColor))
+            setPadding(20, 20, 20, 20)
+            isClickable = true
+            isFocusable = true
+            minimumHeight = 70
+
+            val buttonText = TextView(this@BrickOverlayService).apply {
+                this.text = text
+                textSize = 18f
+                setTextColor(android.graphics.Color.WHITE)
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                setSingleLine(false)
+                maxLines = 2
+                isClickable = false
+            }
+
+            addView(buttonText)
+            setOnClickListener { onClick() }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         hideOverlay()
         updateJob?.cancel()
+        sessionMonitorJob?.cancel()
         serviceScope.cancel()
+        instance = null
         Log.d(TAG, "BrickOverlayService destroyed")
     }
 }

@@ -12,7 +12,7 @@ data class PhoneBrickSession(
     val durationMinutes: Int? = null, // For duration-based sessions
     val startHour: Int? = null, // For time-window sessions (0-23)
     val startMinute: Int? = null, // For time-window sessions (0-59)
-    val endHour: Int? = null, // For time-window sessions (0-23) 
+    val endHour: Int? = null, // For time-window sessions (0-23)
     val endMinute: Int? = null, // For time-window sessions (0-59)
     val activeDaysOfWeek: String = "1234567", // "1234567" = Mon-Sun, "23456" = Tue-Sat
     val isActive: Boolean = true,
@@ -25,7 +25,8 @@ data class PhoneBrickSession(
     val createdAt: Long = System.currentTimeMillis(),
     val challengeType: ChallengeType = ChallengeType.WAIT,
     val challengeData: String = "5", // Minutes to wait for emergency override
-    val allowEmergencyOverride: Boolean = true // Always enabled for safety
+    val allowEmergencyOverride: Boolean = true, // Always enabled for safety
+    val allowedApps: String = "" // Session-specific allowed apps (comma-separated package names)
 )
 
 enum class BrickSessionType {

@@ -95,12 +95,13 @@ class PhoneBrickViewModel @Inject constructor(
                     startMinute = config.startMinute,
                     endHour = config.endHour,
                     endMinute = config.endMinute,
-                    activeDaysOfWeek = config.activeDaysOfWeek
+                    activeDaysOfWeek = config.activeDaysOfWeek,
+                    allowedApps = config.selectedEssentialApps.joinToString(",") // Save session-specific allowed apps
                     // allowEmergencyOverride is always true by default for safety
                 )
-                
+
                 phoneBrickSessionDao.insertSession(session)
-                
+
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     error = "Failed to create session: ${e.message}"

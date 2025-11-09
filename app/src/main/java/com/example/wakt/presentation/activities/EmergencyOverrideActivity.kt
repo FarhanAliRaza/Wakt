@@ -1,6 +1,7 @@
 package com.example.wakt.presentation.activities
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.OnBackPressedCallback
@@ -22,6 +23,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wakt.data.database.entity.ChallengeType
 import com.example.wakt.presentation.activities.viewmodel.EmergencyOverrideViewModel
 import com.example.wakt.presentation.ui.theme.WaktTheme
+import com.example.wakt.services.BrickOverlayService
 import com.example.wakt.utils.BrickSessionManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
@@ -29,13 +31,24 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class EmergencyOverrideActivity : ComponentActivity() {
-    
+
     @Inject
     lateinit var brickSessionManager: BrickSessionManager
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
+        // Suspend the brick overlay to prevent it from covering this activity
+        BrickOverlayService.suspendForEmergency()
+
+        // Set window flags to appear above the brick overlay
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+            WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD or
+            WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        )
+
         // Prevent back navigation during emergency override
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -47,9 +60,13 @@ class EmergencyOverrideActivity : ComponentActivity() {
             WaktTheme {
                 EmergencyOverrideScreen(
                     onEmergencyComplete = {
+                        // Resume overlay when emergency is complete
+                        BrickOverlayService.resumeAfterEmergency()
                         finish()
                     },
                     onCancel = {
+                        // Resume overlay when user cancels
+                        BrickOverlayService.resumeAfterEmergency()
                         finish()
                     }
                 )
@@ -121,20 +138,16 @@ fun EmergencyOverrideScreen(
                         EmergencyChallengeStep(
                             challengeType = uiState.challengeType,
                             remainingTimeSeconds = uiState.challengeTimeRemaining,
+                            clicksRemaining = uiState.clicksRemaining,
                             onChallengeComplete = { viewModel.completeChallenge() },
-                            onCancel = onCancel
+                            onClickRecord = { viewModel.recordClick() },
+                            onCancel = onCancel,
+                            onEmergencyComplete = onEmergencyComplete
                         )
                     }
                     EmergencyStep.REASON -> {
-                        EmergencyReasonStep(
-                            reason = uiState.emergencyReason,
-                            onReasonChange = { viewModel.updateReason(it) },
-                            onConfirm = { 
-                                viewModel.executeEmergencyOverride()
-                                onEmergencyComplete()
-                            },
-                            onCancel = onCancel
-                        )
+                        // Reason step no longer used - override executes immediately after challenge
+                        Text("Processing...")
                     }
                 }
             }
@@ -198,9 +211,19 @@ private fun EmergencyConfirmationStep(
 private fun EmergencyChallengeStep(
     challengeType: ChallengeType,
     remainingTimeSeconds: Int,
+    clicksRemaining: Int,
     onChallengeComplete: () -> Unit,
-    onCancel: () -> Unit
+    onClickRecord: () -> Unit,
+    onCancel: () -> Unit,
+    onEmergencyComplete: () -> Unit = {}
 ) {
+    // When challenge completes, close the activity
+    LaunchedEffect(clicksRemaining) {
+        if (clicksRemaining <= 0) {
+            delay(500) // Brief delay to show completion message
+            onEmergencyComplete()
+        }
+    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -210,7 +233,7 @@ private fun EmergencyChallengeStep(
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold
         )
-        
+
         when (challengeType) {
             ChallengeType.WAIT -> {
                 Text(
@@ -218,10 +241,10 @@ private fun EmergencyChallengeStep(
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center
                 )
-                
+
                 if (remainingTimeSeconds > 0) {
                     var timeLeft by remember { mutableIntStateOf(remainingTimeSeconds) }
-                    
+
                     LaunchedEffect(remainingTimeSeconds) {
                         while (timeLeft > 0) {
                             delay(1000)
@@ -229,7 +252,7 @@ private fun EmergencyChallengeStep(
                         }
                         onChallengeComplete()
                     }
-                    
+
                     Box(
                         modifier = Modifier
                             .size(120.dp)
@@ -257,6 +280,48 @@ private fun EmergencyChallengeStep(
                     }
                 }
             }
+            ChallengeType.CLICK_500 -> {
+                Text(
+                    text = "Click to verify",
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    text = "Taps remaining: $clicksRemaining",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(16.dp)
+                )
+
+                Button(
+                    onClick = onClickRecord,
+                    modifier = Modifier
+                        .size(140.dp)
+                        .padding(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(
+                        text = "TAP",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+
+                // Show completion message when done
+                if (clicksRemaining <= 0) {
+                    Text(
+                        text = "✓ Challenge complete!",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
             else -> {
                 Text(
                     text = "Challenge type not implemented",
@@ -264,7 +329,7 @@ private fun EmergencyChallengeStep(
                 )
             }
         }
-        
+
         OutlinedButton(
             onClick = onCancel,
             colors = ButtonDefaults.outlinedButtonColors(

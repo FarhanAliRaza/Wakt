@@ -5,6 +5,10 @@
     <!-- Permission to query all installed packages on Android 11+ -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
+    <!-- Permission to access package usage stats - required for foreground app detection -->
+    <!-- Note: User must grant "Usage Access" permission in Settings → Special app access → Usage access -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+
     <!-- Permissions for accessibility service and overlay -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />

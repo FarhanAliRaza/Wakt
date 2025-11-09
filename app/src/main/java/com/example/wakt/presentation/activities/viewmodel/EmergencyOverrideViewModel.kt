@@ -28,8 +28,10 @@ class EmergencyOverrideViewModel @Inject constructor(
         val currentSession = brickSessionManager.getCurrentSession()
         if (currentSession != null) {
             _uiState.value = _uiState.value.copy(
-                challengeType = currentSession.challengeType,
+                // For emergency override, always use CLICK challenge with 200 clicks
+                challengeType = ChallengeType.CLICK_500,
                 challengeTimeRemaining = currentSession.challengeData.toIntOrNull() ?: 5,
+                clicksRemaining = 200,
                 sessionName = currentSession.name
             )
         }
@@ -59,11 +61,22 @@ class EmergencyOverrideViewModel @Inject constructor(
     
     fun completeChallenge() {
         _uiState.value = _uiState.value.copy(
-            currentStep = EmergencyStep.REASON,
             challengeCompleted = true
         )
+        // Immediately execute emergency override after challenge is complete
+        executeEmergencyOverride()
     }
-    
+
+    fun recordClick() {
+        val clicksLeft = _uiState.value.clicksRemaining - 1
+        _uiState.value = _uiState.value.copy(clicksRemaining = clicksLeft)
+
+        // When all 200 clicks are done, complete the challenge and execute override
+        if (clicksLeft <= 0) {
+            completeChallenge()
+        }
+    }
+
     fun updateReason(reason: String) {
         _uiState.value = _uiState.value.copy(emergencyReason = reason)
     }
@@ -89,6 +102,7 @@ data class EmergencyOverrideUiState(
     val currentStep: EmergencyStep = EmergencyStep.CONFIRMATION,
     val challengeType: ChallengeType = ChallengeType.WAIT,
     val challengeTimeRemaining: Int = 5,
+    val clicksRemaining: Int = 200,
     val challengeCompleted: Boolean = false,
     val emergencyReason: String = "",
     val sessionName: String = "",

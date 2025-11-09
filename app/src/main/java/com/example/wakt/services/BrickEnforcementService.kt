@@ -30,7 +30,7 @@ class BrickEnforcementService : Service() {
         private const val TAG = "BrickEnforcementService"
         private const val NOTIFICATION_ID = 2001
         private const val CHANNEL_ID = "brick_enforcement_channel"
-        private const val ENFORCEMENT_INTERVAL_MS = 1500L // Check every 1.5 seconds
+        private const val ENFORCEMENT_INTERVAL_MS = 3000L // Check every 3 seconds - gives more time for app to launch
         
         fun start(context: Context) {
             val intent = Intent(context, BrickEnforcementService::class.java)
@@ -149,11 +149,29 @@ class BrickEnforcementService : Service() {
                         break
                     }
 
-                    // Start/maintain overlay service - ensures persistent overlay is showing
-                    try {
-                        BrickOverlayService.start(this@BrickEnforcementService)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error starting overlay service", e)
+                    // Simple logic: check foreground app and show/hide overlay accordingly
+                    val foregroundApp = getForegroundPackageName()
+                    Log.d(TAG, "=== ENFORCEMENT CHECK === Foreground: $foregroundApp")
+
+                    val isAppAllowed = brickSessionManager.isAppAllowedInCurrentSession(foregroundApp)
+                    Log.d(TAG, "Is allowed: $isAppAllowed")
+
+                    if (isAppAllowed) {
+                        // Allowed app in foreground - hide overlay
+                        Log.d(TAG, "✓ Allowed app in foreground: $foregroundApp - HIDING overlay")
+                        try {
+                            BrickOverlayService.hideOverlay()
+                        } catch (e: Exception) {
+                            Log.d(TAG, "Could not hide overlay")
+                        }
+                    } else {
+                        // Non-allowed app or home screen in foreground - show overlay
+                        Log.d(TAG, "✗ Blocked/home in foreground: $foregroundApp - SHOWING overlay")
+                        try {
+                            BrickOverlayService.start(this@BrickEnforcementService)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Error starting overlay service", e)
+                        }
                     }
 
                     // Update notification every 20 iterations (30 seconds)
@@ -182,7 +200,7 @@ class BrickEnforcementService : Service() {
     private fun formatRemainingTime(): String {
         val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
         val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes() ?: 0
-        
+
         return when {
             remainingMinutes >= 60 -> {
                 val hours = remainingMinutes / 60
@@ -198,7 +216,17 @@ class BrickEnforcementService : Service() {
             else -> "Ending now"
         }
     }
-    
+
+    /**
+     * Get the currently active foreground app package name
+     * Uses the single reliable source from AppBlockingService (AccessibilityService)
+     */
+    private fun getForegroundPackageName(): String? {
+        val foreground = AppBlockingService.getForegroundPackageReliably()
+        Log.d(TAG, "getForegroundPackageName: Found $foreground")
+        return foreground
+    }
+
     private fun stopEnforcement() {
         isEnforcing = false
         enforcementJob?.cancel()

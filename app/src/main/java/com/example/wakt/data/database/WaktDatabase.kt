@@ -20,14 +20,14 @@ import com.example.wakt.data.database.entity.BrickSessionLog
 
 @Database(
     entities = [
-        BlockedItem::class, 
-        GoalBlock::class, 
+        BlockedItem::class,
+        GoalBlock::class,
         GoalBlockItem::class,
         PhoneBrickSession::class,
         EssentialApp::class,
         BrickSessionLog::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -114,7 +114,7 @@ abstract class WaktDatabase : RoomDatabase() {
                         allowEmergencyOverride INTEGER NOT NULL DEFAULT 1
                     )
                 """)
-                
+
                 // Create essential_apps table
                 database.execSQL("""
                     CREATE TABLE IF NOT EXISTS essential_apps (
@@ -128,7 +128,7 @@ abstract class WaktDatabase : RoomDatabase() {
                         isActive INTEGER NOT NULL DEFAULT 1
                     )
                 """)
-                
+
                 // Create brick_session_logs table
                 database.execSQL("""
                     CREATE TABLE IF NOT EXISTS brick_session_logs (
@@ -146,6 +146,15 @@ abstract class WaktDatabase : RoomDatabase() {
                         appsAccessedDuringSession TEXT NOT NULL DEFAULT '',
                         createdAt INTEGER NOT NULL
                     )
+                """)
+            }
+        }
+
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Add allowedApps column to phone_brick_sessions table
+                database.execSQL("""
+                    ALTER TABLE phone_brick_sessions ADD COLUMN allowedApps TEXT NOT NULL DEFAULT ''
                 """)
             }
         }

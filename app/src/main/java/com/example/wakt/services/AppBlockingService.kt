@@ -7,6 +7,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -69,9 +70,59 @@ class AppBlockingService : AccessibilityService() {
         private const val CHECK_DELAY_MS = 1000L // Delay to avoid too frequent checks
         private const val WEBSITE_BLOCK_COOLDOWN_MS = 2000L // 2 seconds cooldown for tab close animation
         private const val APP_BLOCK_COOLDOWN_MS = 5000L // 5 seconds cooldown for app blocks
-        
-        // Static reference to the service instance for clearing cooldowns
+
+        // Static reference to the service instance for clearing cooldowns and getting foreground package
         private var instance: AppBlockingService? = null
+
+        /**
+         * Get the foreground package name - single reliable source for all services
+         * Uses UsageStatsManager (requires PACKAGE_USAGE_STATS permission and Usage Access grant)
+         * Falls back to AccessibilityService if UsageStatsManager not available
+         */
+        fun getForegroundPackageReliably(): String? {
+            val context = instance ?: return null
+
+            // Method 1: UsageStatsManager (most reliable on modern Android)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    val usageManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+                    if (usageManager != null) {
+                        val timeInterval = 1000L // Last 1 second
+                        val currentTime = System.currentTimeMillis()
+                        val queryUsageStats = usageManager.queryUsageStats(
+                            android.app.usage.UsageStatsManager.INTERVAL_BEST,
+                            currentTime - timeInterval,
+                            currentTime
+                        )
+
+                        if (queryUsageStats.isNotEmpty()) {
+                            val sorted = queryUsageStats.sortedByDescending { it.lastTimeUsed }
+                            val packageName = sorted.firstOrNull()?.packageName
+                            if (!packageName.isNullOrBlank()) {
+                                Log.d(TAG, "getForegroundPackageReliably: Got from UsageStatsManager: $packageName")
+                                return packageName
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "UsageStatsManager method failed (may need Usage Access permission): ${e.message}")
+            }
+
+            // Method 2: Fallback to AccessibilityService if UsageStatsManager unavailable
+            return try {
+                val packageName = instance?.rootInActiveWindow?.packageName?.toString()
+                if (!packageName.isNullOrBlank()) {
+                    Log.d(TAG, "getForegroundPackageReliably: Got from AccessibilityService: $packageName")
+                    return packageName
+                }
+                Log.d(TAG, "getForegroundPackageReliably: AccessibilityService returned null")
+                null
+            } catch (e: Exception) {
+                Log.e(TAG, "getForegroundPackageReliably: All methods failed: ${e.message}")
+                null
+            }
+        }
         
         fun clearWebsiteCooldown(url: String, browserPackage: String) {
             instance?.blockedWebsiteCooldown?.remove("$url|$browserPackage")
@@ -880,13 +931,25 @@ class AppBlockingService : AccessibilityService() {
                 return
             }
 
+            // Allow dialer apps for emergency calls
+            val dialerPackages = listOf(
+                "com.android.dialer",
+                "com.google.android.dialer",
+                "com.samsung.android.dialer",
+                "com.android.phone"
+            )
+            if (dialerPackages.contains(packageName)) {
+                Log.d(TAG, "Allowing dialer during brick session: $packageName")
+                return
+            }
+
             // Allow SystemUI for essential system functions
             if (packageName == "com.android.systemui") {
                 Log.d(TAG, "Allowing SystemUI during brick session")
                 return
             }
 
-            // Check if this is an essential app allowed during brick sessions
+            // Check if this is an allowed or essential app during brick sessions
             val currentSession = brickSessionManager.getCurrentSession()
             if (currentSession == null) {
                 Log.w(TAG, "No active brick session found, blocking app as precaution: $packageName")
@@ -894,8 +957,19 @@ class AppBlockingService : AccessibilityService() {
                 return
             }
 
-            // Perform synchronous essential app check using cached data
-            // This uses in-memory cache so it's fast (<1ms)
+            // FIRST: Check if app is in the session's allowedApps list (from overlay)
+            val isAllowedApp = brickSessionManager.isAppAllowedInCurrentSession(packageName)
+
+            if (isAllowedApp) {
+                Log.d(TAG, "Allowing app from session allowed apps list: $packageName")
+                // Log access asynchronously
+                serviceScope.launch {
+                    brickSessionManager.logEssentialAppAccess(packageName)
+                }
+                return // Allow it and exit
+            }
+
+            // SECOND: Check if it's an essential app
             val isEssential = try {
                 // Run on IO thread but block execution (synchronous)
                 val result = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -928,8 +1002,8 @@ class AppBlockingService : AccessibilityService() {
                     brickSessionManager.logEssentialAppAccess(packageName)
                 }
             } else {
-                // Not essential - block it with notification
-                Log.d(TAG, "BLOCKING non-essential app during brick session: $packageName")
+                // Not essential and not allowed - block it with notification
+                Log.d(TAG, "BLOCKING non-essential, non-allowed app during brick session: $packageName")
                 blockNonEssentialAppWithNotification(packageName)
             }
 

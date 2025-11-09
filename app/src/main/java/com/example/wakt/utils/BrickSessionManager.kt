@@ -455,7 +455,41 @@ class BrickSessionManager @Inject constructor(
     fun getCurrentSession(): PhoneBrickSession? {
         return if (isPhoneBricked()) currentBrickSession else null
     }
-    
+
+    /**
+     * Check if an app is allowed during the current brick session
+     * Checks the session-specific allowed apps list (comma-separated package names)
+     */
+    fun isAppAllowedInCurrentSession(packageName: String?): Boolean {
+        if (packageName.isNullOrBlank()) {
+            Log.d(TAG, "App check: packageName is null or blank")
+            return false
+        }
+
+        val session = currentBrickSession
+        if (session == null) {
+            Log.d(TAG, "App check for $packageName: No active brick session")
+            return false
+        }
+
+        // If no allowed apps are configured, all non-essential apps are blocked
+        if (session.allowedApps.isEmpty()) {
+            Log.d(TAG, "App check for $packageName: No allowed apps configured")
+            return false
+        }
+
+        // Parse comma-separated list of allowed package names
+        val allowedPackages = session.allowedApps
+            .split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+        val isAllowed = allowedPackages.contains(packageName)
+        Log.d(TAG, "App check for $packageName: allowedApps='${session.allowedApps}' | parsedList=$allowedPackages | isAllowed=$isAllowed")
+
+        return isAllowed
+    }
+
     /**
      * Get remaining time for current session in minutes
      */
