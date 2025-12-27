@@ -29,6 +29,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wakt.data.database.entity.BlockedItem
+import com.example.wakt.presentation.components.PermissionDialog
 import com.example.wakt.utils.PermissionHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -153,28 +154,8 @@ fun HomeScreen(
     if (showPermissionDialog) {
         PermissionDialog(
             missingPermissions = missingPermissions,
-            onDismiss = { showPermissionDialog = false },
-            onRequestPermissions = { permission ->
-                when (permission) {
-                    "Accessibility Service" -> PermissionHelper.requestAccessibilityPermission(context)
-                    "Display over other apps" -> PermissionHelper.requestOverlayPermission(context)
-                    // VPN Service permission handling removed for battery optimization
-                    /*
-                    "VPN Service" -> {
-                        if (onVpnPermissionRequest != null) {
-                            onVpnPermissionRequest.invoke {
-                                // Callback executed when VPN permission is granted
-                                refreshPermissions()
-                            }
-                        } else {
-                            // Fallback: open VPN settings manually
-                            PermissionHelper.requestOverlayPermission(context)
-                        }
-                    }
-                    */
-                }
-                showPermissionDialog = false
-            }
+            context = context,
+            onDismiss = { showPermissionDialog = false }
         )
     }
 }
@@ -313,73 +294,6 @@ fun PermissionWarningBanner(
             }
         }
     }
-}
-
-@Composable
-fun PermissionDialog(
-    missingPermissions: List<String>,
-    onDismiss: () -> Unit,
-    onRequestPermissions: (String) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Permissions Required") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Wakt needs the following permissions to block apps effectively:")
-                
-                missingPermissions.forEach { permission ->
-                    Row(
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Column {
-                            Text(
-                                text = permission,
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                text = when (permission) {
-                                    "Accessibility Service" -> "Monitor when apps are launched and trigger blocking"
-                                    "Display over other apps" -> "Show blocking screen over blocked apps"
-                                    // VPN Service description removed for battery optimization
-                                    // "VPN Service" -> "Intercept network traffic to block websites at DNS level"
-                                    else -> "Required for app functionality"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            missingPermissions.forEach { permission ->
-                TextButton(
-                    onClick = { onRequestPermissions(permission) },
-                    modifier = Modifier
-                        .background(
-                            brush = WaktGradient,
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
-                ) {
-                    Text("Grant $permission", color = Color.White)
-                }
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Later")
-            }
-        }
-    )
 }
 
 @Composable

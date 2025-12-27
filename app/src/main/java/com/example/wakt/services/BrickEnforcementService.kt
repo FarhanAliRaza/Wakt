@@ -31,6 +31,8 @@ class BrickEnforcementService : Service() {
     private var enforcementJob: Job? = null
     private var isEnforcing = false
     private var lastKnownForegroundApp: String? = null  // Cache to prevent flickering
+    private var launcherDetectedTime: Long = 0L  // When we last detected launcher (for sticky overlay)
+    private var lastAllowedAppTime: Long = 0L  // When we last confirmed an allowed app was in foreground
     
     companion object {
         private const val TAG = "BrickEnforcementService"
@@ -155,59 +157,67 @@ class BrickEnforcementService : Service() {
             }
 
             var notificationUpdateCounter = 0
+            var lastCheckedApp: String? = null
+            var lastAllowedState: Boolean? = null
 
             while (isActive && isEnforcing) {
                 try {
                     // Check if brick session is still active
                     if (!brickSessionManager.isPhoneBricked()) {
                         Log.d(TAG, "Brick session ended, stopping enforcement")
-                        // Stop overlay service
                         BrickOverlayService.stop(this@BrickEnforcementService)
                         stopSelf()
                         break
                     }
 
-                    // Simple logic: check foreground app and show/hide overlay accordingly
-                    val currentForegroundApp = getForegroundPackageName()
+                    val currentTime = System.currentTimeMillis()
 
-                    // If detection fails (null), use cached value to avoid flickering
-                    val foregroundApp = if (currentForegroundApp != null) {
-                        currentForegroundApp.also { lastKnownForegroundApp = it }
-                    } else {
-                        lastKnownForegroundApp
-                    }
+                    // Get foreground app - returns null if can't determine
+                    val foregroundApp = getForegroundPackageName()
 
-                    Log.d(TAG, "=== ENFORCEMENT CHECK === Foreground: $foregroundApp (detected: $currentForegroundApp)")
-
-                    // Check if we're in a grace period from launching an allowed app
-                    if (BrickOverlayService.isInLaunchGracePeriod()) {
-                        Log.d(TAG, "✓ In launch grace period - NOT showing overlay")
+                    // If we can't determine foreground app, default to showing overlay
+                    // unless we recently confirmed an allowed app (within 5 seconds)
+                    if (foregroundApp == null) {
+                        if (currentTime - lastAllowedAppTime > 5000L) {
+                            // Haven't seen an allowed app recently - show overlay
+                            if (lastAllowedState != false) {
+                                Log.d(TAG, "✗ Can't detect foreground app - showing overlay")
+                                lastAllowedState = false
+                                BrickOverlayService.start(this@BrickEnforcementService)
+                            }
+                        }
                         delay(ENFORCEMENT_INTERVAL_MS)
+                        notificationUpdateCounter++
                         continue
                     }
 
-                    // Check if it's an emergency app (dialer, settings, etc) or in allowedApps list
-                    val isEmergencyApp = isEmergencyOrEssentialApp(foregroundApp)
-                    val isSessionAllowed = brickSessionManager.isAppAllowedInCurrentSession(foregroundApp)
-                    val isAppAllowed = isEmergencyApp || isSessionAllowed
+                    lastKnownForegroundApp = foregroundApp
 
-                    Log.d(TAG, "Is allowed: $isAppAllowed (emergency: $isEmergencyApp, session: $isSessionAllowed)")
+                    // Skip if app hasn't changed
+                    if (foregroundApp == lastCheckedApp && lastAllowedState != null) {
+                        delay(ENFORCEMENT_INTERVAL_MS)
+                        notificationUpdateCounter++
+                        continue
+                    }
 
+                    lastCheckedApp = foregroundApp
+                    val isAppAllowed = isEmergencyOrEssentialApp(foregroundApp) ||
+                            brickSessionManager.isAppAllowedInCurrentSession(foregroundApp)
+
+                    // Track when we last saw an allowed app
                     if (isAppAllowed) {
-                        // Allowed/emergency app in foreground - hide overlay
-                        Log.d(TAG, "✓ Allowed app in foreground: $foregroundApp - HIDING overlay")
-                        try {
+                        lastAllowedAppTime = currentTime
+                    }
+
+                    // Only update overlay if state changed
+                    if (isAppAllowed != lastAllowedState) {
+                        lastAllowedState = isAppAllowed
+                        if (isAppAllowed) {
+                            Log.d(TAG, "✓ Allowed: $foregroundApp - hiding overlay")
                             BrickOverlayService.hideOverlay()
-                        } catch (e: Exception) {
-                            Log.d(TAG, "Could not hide overlay")
-                        }
-                    } else {
-                        // Non-allowed app or home screen in foreground - show overlay
-                        Log.d(TAG, "✗ Blocked/home in foreground: $foregroundApp - SHOWING overlay")
-                        try {
+                        } else {
+                            Log.d(TAG, "✗ Blocked: $foregroundApp - showing overlay")
                             BrickOverlayService.start(this@BrickEnforcementService)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error starting overlay service", e)
                         }
                     }
 
@@ -258,10 +268,55 @@ class BrickEnforcementService : Service() {
      * Get the currently active foreground app package name
      * Uses the single reliable source from AppBlockingService (AccessibilityService)
      */
+    private val launcherPackages = setOf(
+        "com.google.android.apps.nexuslauncher",
+        "com.sec.android.app.launcher",
+        "com.android.launcher",
+        "com.android.launcher3",
+        "com.miui.home",
+        "com.huawei.android.launcher",
+        "com.oppo.launcher",
+        "com.vivo.launcher"
+    )
+
     private fun getForegroundPackageName(): String? {
-        val foreground = AppBlockingService.getForegroundPackageReliably()
-        Log.d(TAG, "getForegroundPackageName: Found $foreground")
-        return foreground
+        val currentTime = System.currentTimeMillis()
+
+        // Method 1: Try AccessibilityService for real-time data (most reliable)
+        val accessibilityPackage = AppBlockingService.getForegroundPackageReliably()
+        if (!accessibilityPackage.isNullOrBlank()) {
+            // Check if it's a launcher - return it to trigger overlay
+            if (launcherPackages.any { accessibilityPackage.startsWith(it) }) {
+                return accessibilityPackage
+            }
+            // Valid non-launcher app
+            return accessibilityPackage
+        }
+
+        // Method 2: UsageStatsManager fallback
+        val usageManager = getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+            ?: return null
+
+        val stats = usageManager.queryUsageStats(
+            android.app.usage.UsageStatsManager.INTERVAL_BEST,
+            currentTime - 10000L,  // Only look at last 10 seconds for freshness
+            currentTime
+        )
+
+        val sorted = stats.sortedByDescending { it.lastTimeUsed }
+        if (sorted.isEmpty()) return null
+
+        val topApp = sorted.first()
+
+        // Check if data is fresh (used within last 5 seconds)
+        val dataAge = currentTime - topApp.lastTimeUsed
+        if (dataAge > 5000L) {
+            // Data is stale - return null to trigger "can't detect" logic
+            Log.d(TAG, "Stale data: ${topApp.packageName} last used ${dataAge}ms ago")
+            return null
+        }
+
+        return topApp.packageName
     }
 
     /**
@@ -269,27 +324,27 @@ class BrickEnforcementService : Service() {
      * Checks user's essential apps from database (includes Phone, Messages, user-selected apps)
      */
     private suspend fun isEmergencyOrEssentialApp(packageName: String?): Boolean {
-        if (packageName.isNullOrBlank()) {
-            Log.d(TAG, "isEmergencyOrEssentialApp: packageName is null or blank")
-            return false
-        }
+        if (packageName.isNullOrBlank()) return false
 
-        // Minimum safety essentials (always allowed, even if user removes from DB)
-        val safetyPackages = listOf(
-            "com.example.wakt",      // Our app
-            "com.android.systemui",  // System UI
-            "com.android.settings"   // Settings
+        // Launchers - show overlay (user on home screen)
+        val launcherPackages = listOf(
+            "com.google.android.apps.nexuslauncher",
+            "com.sec.android.app.launcher",
+            "com.android.launcher",
+            "com.android.launcher3",
+            "com.miui.home",
+            "com.huawei.android.launcher",
+            "com.oppo.launcher",
+            "com.vivo.launcher"
         )
+        if (launcherPackages.any { packageName.startsWith(it) }) return false
 
-        if (safetyPackages.any { packageName.startsWith(it) }) {
-            Log.d(TAG, "isEmergencyOrEssentialApp: $packageName is in safety packages - ALLOWED")
-            return true
-        }
+        // System essentials - always allowed
+        val safetyPackages = listOf("com.android.systemui", "com.android.settings")
+        if (safetyPackages.any { packageName.startsWith(it) }) return true
 
-        // Check user's essential apps from database (includes Phone, Messages, user-selected apps)
-        val isEssential = essentialAppsManager.isAppEssential(packageName)
-        Log.d(TAG, "isEmergencyOrEssentialApp: $packageName isEssential from DB = $isEssential")
-        return isEssential
+        // Check user's essential apps from database
+        return essentialAppsManager.isAppEssential(packageName)
     }
 
     private fun stopEnforcement() {

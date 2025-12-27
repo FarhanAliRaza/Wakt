@@ -3,6 +3,8 @@ package com.example.wakt.presentation.screens.lock
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -12,6 +14,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.wakt.presentation.components.PermissionWarningBanner
 import com.example.wakt.presentation.components.WheelTimePicker
 import com.example.wakt.utils.PermissionHelper
 import java.text.SimpleDateFormat
@@ -21,7 +24,10 @@ import java.util.Locale
 @Composable
 fun PhoneTab(
     viewModel: LockViewModel,
-    onNavigateToTryLock: () -> Unit
+    onNavigateToTryLock: () -> Unit,
+    permissionsGranted: Boolean = true,
+    missingPermissions: List<String> = emptyList(),
+    onRequestPermissions: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -33,6 +39,14 @@ fun PhoneTab(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Permission warning banner
+        if (!permissionsGranted) {
+            PermissionWarningBanner(
+                missingPermissions = missingPermissions,
+                onRequestPermissions = onRequestPermissions
+            )
+        }
+
         // Header
         Text(
             text = "Set lock time now",

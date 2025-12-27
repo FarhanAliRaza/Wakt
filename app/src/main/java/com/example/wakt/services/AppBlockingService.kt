@@ -95,26 +95,36 @@ class AppBlockingService : AccessibilityService() {
 
         /**
          * Get the foreground package name - single reliable source for all services
-         * Uses UsageStatsManager (requires PACKAGE_USAGE_STATS permission and Usage Access grant)
-         * Falls back to AccessibilityService if UsageStatsManager not available
+         * PRIORITY: AccessibilityService (real-time) > UsageStatsManager (delayed)
          */
         fun getForegroundPackageReliably(): String? {
-            val context = instance
-            if (context == null) {
-                Log.d(TAG, "getForegroundPackageReliably: instance is null, using lastKnown=$lastKnownForegroundPackage")
+            // Method 1: Use lastKnownForegroundPackage from accessibility events (REAL-TIME)
+            // This is updated immediately when TYPE_WINDOW_STATE_CHANGED fires
+            if (!lastKnownForegroundPackage.isNullOrBlank()) {
                 return lastKnownForegroundPackage
             }
 
-            // Method 1: UsageStatsManager (most reliable on modern Android)
+            // Method 2: Try rootInActiveWindow (AccessibilityService)
+            try {
+                val packageName = instance?.rootInActiveWindow?.packageName?.toString()
+                if (!packageName.isNullOrBlank()) {
+                    Log.d(TAG, "getForegroundPackageReliably: Got from rootInActiveWindow: $packageName")
+                    return packageName
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "getForegroundPackageReliably: rootInActiveWindow failed: ${e.message}")
+            }
+
+            // Method 3: UsageStatsManager as last resort (has delays)
+            val context = instance ?: return null
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                     val usageManager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
                     if (usageManager != null) {
-                        val timeInterval = 1000L // Last 1 second
                         val currentTime = System.currentTimeMillis()
                         val queryUsageStats = usageManager.queryUsageStats(
                             android.app.usage.UsageStatsManager.INTERVAL_BEST,
-                            currentTime - timeInterval,
+                            currentTime - 5000L,
                             currentTime
                         )
 
@@ -129,28 +139,9 @@ class AppBlockingService : AccessibilityService() {
                     }
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "UsageStatsManager method failed (may need Usage Access permission): ${e.message}")
+                Log.d(TAG, "UsageStatsManager failed: ${e.message}")
             }
 
-            // Method 2: Fallback to AccessibilityService if UsageStatsManager unavailable
-            try {
-                val packageName = instance?.rootInActiveWindow?.packageName?.toString()
-                if (!packageName.isNullOrBlank()) {
-                    Log.d(TAG, "getForegroundPackageReliably: Got from AccessibilityService: $packageName")
-                    return packageName
-                }
-                Log.d(TAG, "getForegroundPackageReliably: AccessibilityService returned null")
-            } catch (e: Exception) {
-                Log.e(TAG, "getForegroundPackageReliably: AccessibilityService failed: ${e.message}")
-            }
-
-            // Method 3: Fallback to last known package from accessibility events
-            if (!lastKnownForegroundPackage.isNullOrBlank()) {
-                Log.d(TAG, "getForegroundPackageReliably: Using lastKnownForegroundPackage: $lastKnownForegroundPackage")
-                return lastKnownForegroundPackage
-            }
-
-            Log.d(TAG, "getForegroundPackageReliably: All methods failed, returning null")
             return null
         }
         

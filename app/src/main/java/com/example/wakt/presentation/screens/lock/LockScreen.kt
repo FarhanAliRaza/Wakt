@@ -19,7 +19,10 @@ fun LockScreen(
     onNavigateToTryLock: () -> Unit,
     viewModel: LockViewModel = hiltViewModel(),
     selectedTab: Int = 0,
-    onTabChange: (Int) -> Unit = {}
+    onTabChange: (Int) -> Unit = {},
+    permissionsGranted: Boolean = true,
+    missingPermissions: List<String> = emptyList(),
+    onRequestPermissions: () -> Unit = {}
 ) {
     val tabs = listOf("Phone", "App")
 
@@ -41,11 +44,17 @@ fun LockScreen(
         when (selectedTab) {
             0 -> PhoneTab(
                 viewModel = viewModel,
-                onNavigateToTryLock = onNavigateToTryLock
+                onNavigateToTryLock = onNavigateToTryLock,
+                permissionsGranted = permissionsGranted,
+                missingPermissions = missingPermissions,
+                onRequestPermissions = onRequestPermissions
             )
             1 -> AppTab(
                 viewModel = viewModel,
-                onNavigateToAddBlock = onNavigateToAddBlock
+                onNavigateToAddBlock = onNavigateToAddBlock,
+                permissionsGranted = permissionsGranted,
+                missingPermissions = missingPermissions,
+                onRequestPermissions = onRequestPermissions
             )
         }
     }

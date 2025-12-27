@@ -47,6 +47,14 @@ fun PhoneBrickScreen(
     var showEssentialAppsDialog by remember { mutableStateOf(false) }
     var showPermissionDialog by remember { mutableStateOf(false) }
     var pendingSessionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // Check permissions - use mutableStateOf so it can be refreshed
+    var missingPermissions by remember { mutableStateOf(PermissionHelper.getMissingPermissions(context)) }
+
+    // Refresh permissions when screen is resumed
+    LaunchedEffect(Unit) {
+        missingPermissions = PermissionHelper.getMissingPermissions(context)
+    }
     
     Scaffold(
         topBar = {
@@ -81,6 +89,22 @@ fun PhoneBrickScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            // Permission warning banner
+            if (missingPermissions.isNotEmpty()) {
+                item {
+                    PermissionWarningBanner(
+                        missingPermissions = missingPermissions,
+                        onRequestPermission = { permission ->
+                            when (permission) {
+                                "Accessibility Service" -> PermissionHelper.requestAccessibilityPermission(context)
+                                "Display over other apps" -> PermissionHelper.requestOverlayPermission(context)
+                                "Usage Access" -> PermissionHelper.requestUsageAccessPermission(context)
+                            }
+                        }
+                    )
+                }
+            }
+
             // Current active session (if any)
             uiState.currentActiveSession?.let { session ->
                 item {
@@ -537,14 +561,70 @@ private fun formatActiveDays(daysString: String): String {
         '1' to "Sun", '2' to "Mon", '3' to "Tue", '4' to "Wed",
         '5' to "Thu", '6' to "Fri", '7' to "Sat"
     )
-    
+
     return if (daysString == "1234567") {
         "Daily"
     } else if (daysString == "23456") {
-        "Weekdays" 
+        "Weekdays"
     } else if (daysString == "17") {
         "Weekends"
     } else {
         daysString.map { dayNames[it] ?: "" }.joinToString(", ")
+    }
+}
+
+@Composable
+private fun PermissionWarningBanner(
+    missingPermissions: List<String>,
+    onRequestPermission: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+                Text(
+                    text = "Permissions Required",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+
+            Text(
+                text = "Grant these permissions for Phone Brick to work correctly:",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+
+            missingPermissions.forEach { permission ->
+                OutlinedButton(
+                    onClick = {
+                        android.util.Log.d("PermissionBanner", "Button clicked for: $permission")
+                        onRequestPermission(permission)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text("Grant $permission")
+                }
+            }
+        }
     }
 }

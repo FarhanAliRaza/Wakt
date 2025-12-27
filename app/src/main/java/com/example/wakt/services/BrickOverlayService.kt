@@ -84,11 +84,6 @@ class BrickOverlayService : Service() {
             Log.d(TAG, "BrickOverlayService stopped")
         }
 
-        // Track the last launched app and timestamp to prevent overlay from re-showing immediately
-        private var lastLaunchedApp: String? = null
-        private var lastLaunchTime: Long = 0
-        private const val LAUNCH_GRACE_PERIOD_MS = 10000L // 10 seconds grace period
-
         fun hideOverlay() {
             instance?.hideOverlay()
             Log.d(TAG, "Overlay hidden by enforcement service")
@@ -97,35 +92,6 @@ class BrickOverlayService : Service() {
         fun showOverlay() {
             instance?.showOverlay()
             Log.d(TAG, "Overlay shown by enforcement service")
-        }
-
-        /**
-         * Check if we recently launched an allowed app and should NOT show the overlay
-         */
-        fun isInLaunchGracePeriod(): Boolean {
-            val elapsed = System.currentTimeMillis() - lastLaunchTime
-            val inGrace = lastLaunchedApp != null && elapsed < LAUNCH_GRACE_PERIOD_MS
-            if (inGrace) {
-                Log.d(TAG, "In launch grace period for $lastLaunchedApp (${elapsed}ms elapsed)")
-            }
-            return inGrace
-        }
-
-        /**
-         * Record that we launched an allowed app
-         */
-        fun recordAppLaunch(packageName: String) {
-            lastLaunchedApp = packageName
-            lastLaunchTime = System.currentTimeMillis()
-            Log.d(TAG, "Recorded app launch: $packageName")
-        }
-
-        /**
-         * Clear the launch grace period (e.g., when user returns to home)
-         */
-        fun clearLaunchGracePeriod() {
-            lastLaunchedApp = null
-            lastLaunchTime = 0
         }
 
         fun suspendForEmergency() {
@@ -746,9 +712,6 @@ class BrickOverlayService : Service() {
             val intent = packageManager.getLaunchIntentForPackage(packageName)
             if (intent != null) {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-
-                // Record the launch BEFORE hiding overlay - this prevents enforcement from re-showing
-                recordAppLaunch(packageName)
 
                 // Hide overlay immediately to let app come to foreground
                 hideOverlay()

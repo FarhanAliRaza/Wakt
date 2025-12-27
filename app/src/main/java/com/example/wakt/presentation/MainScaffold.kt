@@ -17,17 +17,25 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.example.wakt.presentation.components.PermissionDialog
 import com.example.wakt.presentation.screens.addblock.AddBlockScreen
 import com.example.wakt.presentation.screens.lock.LockScreen
 import com.example.wakt.presentation.screens.lock.LockViewModel
@@ -35,6 +43,7 @@ import com.example.wakt.presentation.screens.lock.TryLockScreen
 import com.example.wakt.presentation.screens.schedule.ScheduleScreen
 import com.example.wakt.presentation.screens.schedule.ScheduleDetailScreen
 import com.example.wakt.presentation.screens.settings.SettingsScreen
+import com.example.wakt.utils.PermissionHelper
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 
@@ -60,6 +69,44 @@ fun MainScaffold(
 
     // Shared ViewModel for lock-related screens
     val lockViewModel: LockViewModel = hiltViewModel()
+
+    // Global permission state
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var showPermissionDialog by remember { mutableStateOf(false) }
+    var permissionsGranted by remember { mutableStateOf(PermissionHelper.areAllPermissionsGranted(context)) }
+    var missingPermissions by remember { mutableStateOf(PermissionHelper.getMissingPermissions(context)) }
+
+    val refreshPermissions = {
+        permissionsGranted = PermissionHelper.areAllPermissionsGranted(context)
+        missingPermissions = PermissionHelper.getMissingPermissions(context)
+    }
+
+    // Refresh permissions when app comes to foreground
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshPermissions()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshPermissions()
+    }
+
+    // Global permission dialog
+    if (showPermissionDialog) {
+        PermissionDialog(
+            missingPermissions = missingPermissions,
+            context = context,
+            onDismiss = { showPermissionDialog = false }
+        )
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -112,7 +159,10 @@ fun MainScaffold(
                         onNavigateToTryLock = { navController.navigate("try_lock") },
                         viewModel = lockViewModel,
                         selectedTab = lockScreenTab,
-                        onTabChange = { lockScreenTab = it }
+                        onTabChange = { lockScreenTab = it },
+                        permissionsGranted = permissionsGranted,
+                        missingPermissions = missingPermissions,
+                        onRequestPermissions = { showPermissionDialog = true }
                     )
                     1 -> ScheduleScreen(
                         onNavigateToAddSchedule = { isAppSchedule ->
