@@ -5,9 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.wakt.data.database.dao.BlockedItemDao
 import com.example.wakt.data.database.entity.BlockedItem
-import com.example.wakt.utils.PermissionHelper
 import com.example.wakt.utils.ServiceOptimizer
-import com.example.wakt.utils.DeviceAdminManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,7 +25,6 @@ data class HomeUiState(
 class HomeViewModel @Inject constructor(
     private val blockedItemDao: BlockedItemDao,
     private val serviceOptimizer: ServiceOptimizer,
-    val deviceAdminManager: DeviceAdminManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
     

@@ -30,9 +30,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wakt.data.database.entity.BlockedItem
 import com.example.wakt.utils.PermissionHelper
-import com.example.wakt.utils.DeviceAdminManager
-import androidx.compose.material.icons.filled.Lock
-import android.widget.Toast
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,15 +48,11 @@ fun HomeScreen(
     var showPermissionDialog by remember { mutableStateOf(false) }
     var permissionsGranted by remember { mutableStateOf(PermissionHelper.areAllPermissionsGranted(context)) }
     var missingPermissions by remember { mutableStateOf(PermissionHelper.getMissingPermissions(context)) }
-    
-    // Device Admin state
-    var isProtectionEnabled by remember { mutableStateOf(PermissionHelper.isDeviceAdminEnabled(context)) }
-    
+
     // Function to refresh permission status
     val refreshPermissions = {
         permissionsGranted = PermissionHelper.areAllPermissionsGranted(context)
         missingPermissions = PermissionHelper.getMissingPermissions(context)
-        isProtectionEnabled = PermissionHelper.isDeviceAdminEnabled(context)
     }
     
     // Refresh permissions when app comes to foreground
@@ -139,23 +132,7 @@ fun HomeScreen(
                 onClick = onNavigateToPhoneBrick,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
             )
-            
-            // Simple uninstall protection checkbox
-            UninstallProtectionCheckbox(
-                isEnabled = isProtectionEnabled,
-                onToggle = { enabled ->
-                    if (enabled && !isProtectionEnabled) {
-                        // Request device admin permission
-                        val intent = viewModel.deviceAdminManager.createEnableDeviceAdminIntent()
-                        context.startActivity(intent)
-                    } else if (!enabled && isProtectionEnabled) {
-                        // User wants to disable - this will be handled by the device admin system
-                        Toast.makeText(context, "Go to Settings > Security > Device Administrators to disable protection", Toast.LENGTH_LONG).show()
-                    }
-                },
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-            )
-            
+
             // Main content
             Box(modifier = Modifier.weight(1f)) {
                 if (uiState.blockedItems.isEmpty()) {
@@ -492,50 +469,3 @@ fun PhoneBrickBanner(
     }
 }
 
-@Composable
-fun UninstallProtectionCheckbox(
-    isEnabled: Boolean,
-    onToggle: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Default.Lock,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(24.dp)
-            )
-            
-            Spacer(modifier = Modifier.width(12.dp))
-            
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Protect from uninstallation",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    text = "Make it harder to uninstall this app",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            
-            Switch(
-                checked = isEnabled,
-                onCheckedChange = onToggle
-            )
-        }
-    }
-}

@@ -510,12 +510,14 @@ class WebsiteBlockingVpnService : VpnService() {
             )
 
     private fun createNotificationChannel() {
-        val channel =
-                NotificationChannel(CHANNEL_ID, "VPN Service", NotificationManager.IMPORTANCE_LOW)
-                        .apply { description = "Website blocking VPN service" }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel =
+                    NotificationChannel(CHANNEL_ID, "VPN Service", NotificationManager.IMPORTANCE_LOW)
+                            .apply { description = "Website blocking VPN service" }
 
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.createNotificationChannel(channel)
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
     }
 
     private fun createNotification(): Notification {

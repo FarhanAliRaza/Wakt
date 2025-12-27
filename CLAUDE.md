@@ -4,172 +4,162 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Wakt is an Android application built with Kotlin, using Android's Navigation Component for navigation between fragments. The app follows standard Android architecture with Material Design components.
+Wakt is an Android digital wellness app that blocks distracting apps and websites. It uses a multi-layered enforcement system combining AccessibilityService monitoring, foreground services, and persistent overlays.
 
 ### Tech Stack
 - Language: Kotlin
 - Build System: Gradle with Kotlin DSL
-- Min SDK: 24 (Android 7.0)
-- Target/Compile SDK: 36
-- UI: View Binding, Material Design Components
-- Navigation: Android Navigation Component
-- Testing: JUnit 4, Espresso
+- Min SDK: 24 (Android 7.0), Target SDK: 35
+- UI: Jetpack Compose (screens) + Android Views (overlays)
+- DI: Hilt
+- Database: Room with migrations (currently v6)
+- Architecture: MVVM with ViewModels
 
 ## Build Commands
 
 ```bash
-# Build the project
-./gradlew build
-
-# Clean build
-./gradlew clean build
-
-# Install debug APK on connected device/emulator
-./gradlew installDebug
-
-# Run all tests
-./gradlew test
-
-# Run unit tests only
-./gradlew testDebugUnitTest
-
-# Run instrumented tests (requires device/emulator)
-./gradlew connectedAndroidTest
-
-# Run specific test class
-./gradlew test --tests "com.example.wakt.ExampleUnitTest"
-
-# Lint checks
-./gradlew lint
-
-# Generate APK
-./gradlew assembleDebug    # Debug APK
-./gradlew assembleRelease  # Release APK
+./gradlew build                    # Build project
+./gradlew clean build              # Clean build
+./gradlew installDebug             # Install debug APK
+./gradlew test                     # Run all tests
+./gradlew testDebugUnitTest        # Unit tests only
+./gradlew connectedAndroidTest     # Instrumented tests (requires device)
+./gradlew test --tests "com.example.wakt.ExampleUnitTest"  # Specific test
+./gradlew lint                     # Lint checks
+./gradlew assembleDebug            # Generate debug APK
+./gradlew assembleRelease          # Generate release APK
 ```
 
-## Project Structure
+## Architecture
 
+### Core Services (app/src/main/java/com/example/wakt/services/)
+
+**AppBlockingService** (AccessibilityService)
+- Monitors app/website launches via accessibility events
+- Detects foreground app using UsageStatsManager (primary) or accessibility fallback
+- Triggers BlockingOverlayActivity when blocked app/site detected
+- Handles browser-specific tab closing (Chrome, Firefox, Edge, Samsung)
+- Rate limits: 5s cooldown for apps, 2s for websites
+
+**BrickEnforcementService** (Foreground Service)
+- Background monitor for "brick mode" sessions
+- Checks foreground app every 3 seconds
+- Shows/hides BrickOverlayService based on allowed apps
+- Handles session completion and cleanup
+
+**BrickOverlayService** (Overlay Service)
+- Persistent overlay during brick sessions (uses Views, not Compose)
+- Displays session timer, allowed apps grid, emergency buttons
+- FLAG_NOT_FOCUSABLE for touch pass-through
+
+### Data Layer (app/src/main/java/com/example/wakt/data/)
+
+**Key Entities:**
+- `BlockedItem`: Simple app/website blocks with challenge type
+- `PhoneBrickSession`: Focus/sleep/detox sessions with allowed apps
+- `GoalBlock` + `GoalBlockItem`: Long-term multi-item goals (1-90 days)
+- `EssentialApp`: System/user essential apps during sessions
+- `BrickSessionLog`: Session history and analytics
+
+**Database Migrations:** Manual migrations v1→v6, defined in WaktDatabase.kt
+
+### Manager/Utility Layer (app/src/main/java/com/example/wakt/utils/)
+
+**BrickSessionManager**: Core orchestrator for brick sessions
+- Starts/completes sessions, handles emergency overrides
+- Auto-monitors scheduled sessions, resumes on app restart
+
+**EssentialAppsManager**: Essential apps with 5-min memory cache
+
+**TemporaryUnlock**: SharedPreferences-based temporary unlock after challenges
+
+**PermissionHelper**: Checks accessibility and overlay permissions
+
+### Presentation Layer (app/src/main/java/com/example/wakt/presentation/)
+
+**Compose Screens:**
+- HomeScreen: Blocked items list with permission warnings
+- PhoneBrickScreen: Session management, quick-start buttons
+- AddBlockScreen: App selector, website input, challenge picker
+- GoalBlockScreen: Long-term goal creation
+
+**Overlay Activities (Views, not Compose):**
+- BlockingOverlayActivity: Challenge overlay for blocked apps
+- EmergencyOverrideActivity: Emergency unlock confirmation
+
+## Key Data Flows
+
+### App Blocking
 ```
-app/
-├── src/
-│   ├── main/
-│   │   ├── java/com/example/wakt/
-│   │   │   ├── MainActivity.kt        # Main activity with toolbar and FAB
-│   │   │   ├── FirstFragment.kt       # First navigation destination
-│   │   │   └── SecondFragment.kt      # Second navigation destination
-│   │   ├── res/
-│   │   │   ├── layout/               # XML layouts
-│   │   │   ├── navigation/           # Navigation graph
-│   │   │   └── values/              # Colors, strings, themes
-│   │   └── AndroidManifest.xml
-│   ├── test/                         # Unit tests
-│   └── androidTest/                  # Instrumented tests
-└── build.gradle.kts
+User launches blocked app
+  → AppBlockingService.onAccessibilityEvent
+  → checkIfAppIsBlocked() queries DB
+  → BlockingOverlayActivity with challenge
+  → Challenge completed → TemporaryUnlock created
 ```
 
-## Architecture Patterns
+### Brick Mode
+```
+User starts session → BrickSessionManager.startDurationSession()
+  → BrickEnforcementService monitors foreground app
+  → Non-allowed app detected → notification + performGlobalAction(BACK)
+  → Session expires → completeCurrentSession() + log
+```
 
-### Navigation
-- Uses Android Navigation Component with a NavHostFragment
-- Navigation graph defined in `res/navigation/nav_graph.xml`
-- Fragments handle navigation through `findNavController()`
+## Required Permissions
 
-### View Binding
-- All UI components use View Binding (enabled in build.gradle.kts)
-- Binding instances are properly managed with null safety in Fragments
+- QUERY_ALL_PACKAGES: App selector
+- PACKAGE_USAGE_STATS: Foreground app detection (requires manual Settings grant)
+- BIND_ACCESSIBILITY_SERVICE: App monitoring (requires manual enable)
+- SYSTEM_ALERT_WINDOW: Overlays
+- FOREGROUND_SERVICE: Background services
 
-### Fragment Lifecycle Management
-- Fragments properly handle binding lifecycle:
-  - Create binding in `onCreateView()`
-  - Access views in `onViewCreated()`
-  - Clear binding reference in `onDestroyView()`
+## Challenge Types
 
-## Key Components
+- WAIT: Wait X minutes (5-30min timer)
+- QUESTION: Q&A challenge (placeholder)
+- CLICK_500: Click button 500 times
 
-### MainActivity
-- Entry point of the application
-- Sets up the app bar with Navigation Component
-- Contains a Floating Action Button (FAB) with placeholder functionality
-- Handles options menu
+## Development Notes
 
-### Fragments
-- **FirstFragment**: Initial screen with navigation to SecondFragment
-- **SecondFragment**: Secondary screen with back navigation to FirstFragment
-- Both use View Binding pattern with proper lifecycle management
+- Overlays use Views (not Compose) because Compose doesn't render properly in overlay contexts
+- VPN service (WebsiteBlockingVpnService) is disabled for battery optimization
+- Allowed apps stored as comma-separated string in DB
+- Services use SupervisorJob for coroutine scope management
+- Database operations always on Dispatchers.IO
 
-## Dependencies Management
+## Theme / Design System
 
-Dependencies are managed through version catalogs in `gradle/libs.versions.toml`:
-- AndroidX Core, AppCompat, ConstraintLayout
-- Material Design Components
-- Navigation Component (Fragment & UI)
-- Testing: JUnit, Espresso
+App uses a Shadcn-inspired Blue color palette. Colors defined in `presentation/ui/theme/Color.kt`.
 
-## Testing Approach
+**Primary Colors:**
+- Primary: Blue500 `#3B82F6` - buttons, progress indicators, active states
+- PrimaryContainer: Blue900 `#1E3A8A` - selected backgrounds
 
-- **Unit Tests**: Located in `app/src/test/`, run on JVM
-- **Instrumented Tests**: Located in `app/src/androidTest/`, run on device/emulator
-- Test runner: AndroidJUnitRunner
-- Basic example tests provided for both unit and instrumented testing
+**Background/Surface (Dark Theme):**
+- Background: Slate950 `#020617`
+- Surface: Slate900 `#0F172A`
+- SurfaceVariant: Slate800 `#1E293B`
+- Outline: Slate700 `#334155`
 
-## Development TODO List
+**Text Colors:**
+- OnSurface: Slate100 `#F1F5F9`
+- OnSurfaceVariant: Slate400 `#94A3B8`
+- OnPrimary: White
 
-### Phase 1: App Blocking Foundation ✅ COMPLETED
-- [x] Set up Compose project with Hilt dependency injection
-- [x] Create Room database with blocked_items table schema
-- [x] Build app selector UI to show installed apps list (fixed to show all apps including YouTube)
-- [x] Implement AccessibilityService for app launch detection
-- [x] Create blocking overlay with wait timer challenge
-- [x] Fix timer persistence - timer now saves state and only starts when user requests access
+**Semantic:**
+- Destructive: `#EF4444`
+- Success: `#22C55E`
+- Warning: `#F59E0B`
 
-### Phase 2: Website Blocking ✅ COMPLETED
-- [x] Implement Local VPN Service for network-level blocking
-- [x] Add DNS request interception logic
-- [x] Browser URL detection via Accessibility Service
-- [x] Add website input UI in AddBlockScreen
-- [x] Fix VPN permission request flow with proper ActivityResult handling
-- [x] Fix browser loop issue - automatically close blocked website tabs
+**Usage Notes:**
+- Always use Blue500 for progress bars, active indicators, primary buttons
+- For overlay services (BrickOverlayService), use hardcoded hex colors since no Compose theme access
+- Background arcs/tracks use Slate700 `#334155`
 
-### Phase 3: Challenge System ✅ COMPLETED
-- [x] Implement wait timer challenge (10-30 minutes)
-- [x] Build custom Q&A challenge system (placeholder implementation)
-- [x] Make blocking persistent (survive app kill/restart) using SharedPreferences
-- [x] Add cooldown system (30s for websites, 5s for apps) to prevent repeated blocking
+## Debugging
 
-### UI Components ✅ COMPLETED
-- [x] Build MainActivity with blocked items list and FAB
-- [x] Create AddBlockScreen with Apps/Websites tabs
-- [x] Design BlockingOverlay full-screen activity
-- [x] Add comprehensive permission management UI with warning banners and dialogs
-
-### Supporting Features ✅ MOSTLY COMPLETED
-- [x] Set up permission request flow (Accessibility, VPN, Overlay, Notifications)
-- [x] Implement browser-specific tab closing (Chrome, Firefox, Edge, generic browsers)
-- [x] Add TimerPersistence utility for saving timer state across app restarts
-- [ ] Write unit tests for challenge logic
-- [ ] Create instrumented tests for blocking functionality
-- [ ] Ensure < 3% battery usage per day optimization
-- [ ] Test complete flow - add block, trigger block, complete challenge across different browsers
-
-### Testing & Optimization ✅ COMPLETED
-- [x] Test website blocking across different browsers (Chrome, Firefox, Edge, Samsung Internet)
-- [x] Test app blocking with timer persistence across app restarts
-- [x] Performance testing and battery usage optimization
-- [x] Edge case testing (network changes, permission revocation, etc.)
-- [x] Fix duplicate apps in app selector
-
-### Critical Bug Fixes (NEXT PHASE - HIGH PRIORITY)
-- [x] **Fix internet speed degradation** - VPN service causing overall network slowdown
-- [x] **Resolve browser loop issue** - Site open in old tab causes infinite close/block loop
-- [x] **Fix app blocking bypass** - Apps can run after dismissing block screen once
-- [x] **Improve blocking persistence** - Make blocks harder to bypass
-- [x] **Enhanced error handling** - Better recovery from stuck states
-
-### Performance & Reliability Improvements (FUTURE)
-- [ ] Optimize VPN service to only process DNS traffic (reduce network impact)
-- [ ] Implement selective packet filtering for better performance  
-- [ ] Add persistent blocking overlays that can't be easily dismissed
-- [ ] Improve background app state monitoring and detection
-- [ ] Enhanced browser compatibility and tab management
-- [ ] Add network performance monitoring and metrics
-- [ ] Implement crash reporting and usage analytics
+Filter Logcat by tags:
+- `AppBlockingService`: App/website blocking events
+- `BrickEnforcementService`: Brick mode monitoring
+- `BrickSessionManager`: Session lifecycle

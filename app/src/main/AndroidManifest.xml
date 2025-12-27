@@ -2,21 +2,22 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permission to query all installed packages on Android 11+ -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Permission to query all installed packages on Android 11+ (required for app blocker functionality) -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
     <!-- Permission to access package usage stats - required for foreground app detection -->
     <!-- Note: User must grant "Usage Access" permission in Settings → Special app access → Usage access -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
     <!-- Permissions for accessibility service and overlay -->
-    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" />
+    <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     
     <!-- Permissions for emergency calling -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
-    <uses-permission android:name="android.permission.CALL_PRIVILEGED" />
+    <uses-permission android:name="android.permission.CALL_PRIVILEGED" tools:ignore="ProtectedPermissions" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
     
     <!-- Permission for exact alarm scheduling (required for foreground services on API 35+) -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -142,19 +143,6 @@
                 android:value="Website blocking VPN service" />
         </service>
         -->
-        
-        <!-- Device Admin Receiver for uninstall protection -->
-        <receiver
-            android:name=".services.WaktDeviceAdminReceiver"
-            android:exported="true"
-            android:permission="android.permission.BIND_DEVICE_ADMIN">
-            <meta-data
-                android:name="android.app.device_admin"
-                android:resource="@xml/device_admin" />
-            <intent-filter>
-                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-            </intent-filter>
-        </receiver>
     </application>
 
 </manifest>

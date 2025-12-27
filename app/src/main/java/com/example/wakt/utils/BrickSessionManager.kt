@@ -105,6 +105,81 @@ class BrickSessionManager @Inject constructor(
     }
     
     /**
+     * Start a try lock session with seconds-based duration (for preview/testing)
+     */
+    suspend fun startTryLockSession(sessionId: Long, durationSeconds: Int): Boolean {
+        try {
+            // Fetch session first (on IO thread)
+            val session = withContext(Dispatchers.IO) {
+                phoneBrickSessionDao.getSessionById(sessionId)
+            } ?: return false
+
+            val currentTime = System.currentTimeMillis()
+            val endTime = currentTime + (durationSeconds * 1000L)
+
+            // Perform all DB operations on IO thread
+            val logId = withContext(Dispatchers.IO) {
+                // Start the session in database
+                phoneBrickSessionDao.startSession(sessionId, currentTime, endTime)
+
+                // Create session log (convert seconds to minutes for logging, minimum 1)
+                val sessionLog = BrickSessionLog(
+                    sessionId = sessionId,
+                    sessionStartTime = currentTime,
+                    scheduledDurationMinutes = maxOf(1, (durationSeconds + 59) / 60),
+                    completionStatus = SessionCompletionStatus.ONGOING
+                )
+                brickSessionLogDao.insertSessionLog(sessionLog)
+            }
+
+            // Update current state on Main thread
+            currentBrickSession = session.copy(
+                isCurrentlyBricked = true,
+                currentSessionStartTime = currentTime,
+                currentSessionEndTime = endTime
+            )
+            currentSessionLog = BrickSessionLog(
+                id = logId,
+                sessionId = sessionId,
+                sessionStartTime = currentTime,
+                scheduledDurationMinutes = maxOf(1, (durationSeconds + 59) / 60),
+                completionStatus = SessionCompletionStatus.ONGOING
+            )
+
+            // Start monitoring with faster check interval for short sessions
+            startTryLockSessionMonitoring()
+            startEnforcementServices()
+
+            Log.i(TAG, "Started try lock session: ${session.name} for $durationSeconds seconds")
+            return true
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting try lock session", e)
+            return false
+        }
+    }
+
+    /**
+     * Monitor try lock session with faster check interval (1 second)
+     */
+    private fun startTryLockSessionMonitoring() {
+        currentSessionMonitorJob?.cancel()
+        currentSessionMonitorJob = scope.launch {
+            while (isActive && currentBrickSession?.isCurrentlyBricked == true) {
+                delay(1_000) // Check every second for try lock sessions
+
+                val session = currentBrickSession ?: break
+                val endTime = session.currentSessionEndTime ?: break
+
+                if (System.currentTimeMillis() >= endTime) {
+                    completeCurrentSession()
+                    break
+                }
+            }
+        }
+    }
+
+    /**
      * Check if any scheduled sessions should be active now
      */
     private fun startScheduleMonitoring() {

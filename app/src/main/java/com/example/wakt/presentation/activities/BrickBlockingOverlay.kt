@@ -79,8 +79,10 @@ class BrickBlockingOverlay : ComponentActivity() {
         }
     }
     
+    @Suppress("MissingSuperCall")
+    @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        // Prevent back button from working
+        // Intentionally not calling super to prevent back navigation during brick mode
         redirectToBrickLauncher()
     }
     

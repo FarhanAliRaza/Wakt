@@ -7,11 +7,16 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.content.pm.ServiceInfo
 import android.provider.Settings
 import android.view.WindowManager
 import android.widget.*
 import androidx.core.app.NotificationCompat
+import com.example.wakt.presentation.views.CircularTimerView
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.example.wakt.R
 import com.example.wakt.presentation.activities.EmergencyOverrideActivity
 import com.example.wakt.utils.BrickSessionManager
@@ -40,6 +45,10 @@ class BrickOverlayService : Service() {
     private var isOverlayShowing = false
     private var updateJob: Job? = null
     private var sessionMonitorJob: Job? = null
+    private var circularTimerView: CircularTimerView? = null
+    private var timeTextView: TextView? = null
+    private var endTimeTextView: TextView? = null
+    private var totalSessionSeconds: Int = 0
 
     companion object {
         private const val TAG = "BrickOverlayService"
@@ -260,161 +269,299 @@ class BrickOverlayService : Service() {
         }
     }
 
-    private fun buildOverlayContent(): LinearLayout {
+    private fun buildOverlayContent(): FrameLayout {
         val currentSession = brickSessionManager.getCurrentSession()
 
-        // Main container - aligned at top with proper spacing
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        // Calculate total session duration from actual session timestamps (handles try lock seconds properly)
+        totalSessionSeconds = if (currentSession != null &&
+            currentSession.currentSessionStartTime != null &&
+            currentSession.currentSessionEndTime != null) {
+            ((currentSession.currentSessionEndTime!! - currentSession.currentSessionStartTime!!) / 1000).toInt()
+        } else {
+            currentSession?.durationMinutes?.times(60) ?: 0
+        }
+
+        // Main container - use FrameLayout for easier centering
+        val container = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
-            gravity = Gravity.CENTER_HORIZONTAL or Gravity.TOP
-            setPadding(24, 40, 24, 24)
+            setBackgroundColor(android.graphics.Color.parseColor("#FF0F172A")) // Dark slate background
         }
 
-        // Lock icon - larger and more prominent
-        val lockIcon = TextView(this).apply {
-            text = "🔒"
-            textSize = 80f
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = 24
-            }
-        }
-        container.addView(lockIcon)
-
-        // Session info card - improved styling
-        if (currentSession != null) {
-            val sessionCard = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    bottomMargin = 40
-                }
-                setBackgroundColor(android.graphics.Color.parseColor("#FF1F1F1F"))
-                setPadding(20, 24, 20, 24)
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-
-            // Combined time display
-            val timeRemaining = TextView(this).apply {
-                text = formatSessionTime()
-                textSize = 24f
-                setTextColor(android.graphics.Color.parseColor("#FFFF6B6B"))
-                gravity = Gravity.CENTER
-                typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            }
-            sessionCard.addView(timeRemaining)
-
-            container.addView(sessionCard)
-        }
-
-        // Add scroll view for essentials and buttons - takes remaining space
-        val scrollView = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f // Weight to take remaining space
-            )
-            isVerticalScrollBarEnabled = false
-        }
-
-        val scrollContent = LinearLayout(this).apply {
+        // Card with rounded corners containing timer
+        val timerCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT
-            )
-            setPadding(16, 16, 16, 16)
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            ).apply {
+                marginStart = dpToPx(16)
+                marginEnd = dpToPx(16)
+            }
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dpToPx(24), dpToPx(40), dpToPx(24), dpToPx(32))
+
+            // Rounded background
+            val cardBackground = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.parseColor("#FF1E293B")) // Slate800
+                cornerRadius = dpToPx(32).toFloat()
+            }
+            background = cardBackground
         }
 
-        // Load essential apps asynchronously and add to overlay
-        loadAndDisplayEssentialApps(scrollContent)
+        // Circular timer container
+        val timerContainer = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                dpToPx(220),
+                dpToPx(220)
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dpToPx(32)
+            }
+        }
 
-        // Button container - wrapped for proper centering
-        val buttonContainer = LinearLayout(this).apply {
+        // Circular timer view
+        circularTimerView = CircularTimerView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setStrokeWidth(dpToPx(6).toFloat())
+        }
+        timerContainer.addView(circularTimerView)
+
+        // Center content (Left time label + countdown)
+        val centerContent = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+            gravity = Gravity.CENTER
+        }
+
+        val leftTimeLabel = TextView(this).apply {
+            text = "Left time"
+            textSize = 12f
+            setTextColor(android.graphics.Color.parseColor("#FF94A3B8")) // Slate 400
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(4)
+            }
+        }
+        centerContent.addView(leftTimeLabel)
+
+        timeTextView = TextView(this).apply {
+            text = formatCountdownTime()
+            textSize = 32f
+            setTextColor(android.graphics.Color.WHITE)
+            gravity = Gravity.CENTER
+            typeface = android.graphics.Typeface.create("monospace", android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        centerContent.addView(timeTextView)
+
+        timerContainer.addView(centerContent)
+        timerCard.addView(timerContainer)
+
+        // End time row
+        val endTimeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
             )
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(8, 16, 8, 16)
+            gravity = Gravity.CENTER_VERTICAL
         }
 
-        // Emergency access button - using custom view to avoid FLAG_NOT_FOCUSABLE text clipping
-        if (currentSession?.allowEmergencyOverride == true) {
-            val emergencyButton = createCustomButton(
-                text = "⚠️ Emergency Access",
-                backgroundColor = "#FFEF5350",
-                marginBottom = 12
-            ) {
-                Log.d(TAG, "Emergency Access button clicked")
-                suspendForEmergency()
-                serviceScope.launch {
-                    delay(100)
-                    try {
-                        val intent = Intent(this@BrickOverlayService, EmergencyOverrideActivity::class.java).apply {
-                            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                        }
-                        startActivity(intent)
-                        Log.d(TAG, "Emergency Access activity launched")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Error launching Emergency Access", e)
-                        resumeAfterEmergency()
-                    }
-                }
+        val endTimeLabel = TextView(this).apply {
+            text = "End Time"
+            textSize = 14f
+            setTextColor(android.graphics.Color.parseColor("#FF94A3B8"))
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            )
+        }
+        endTimeRow.addView(endTimeLabel)
+
+        endTimeTextView = TextView(this).apply {
+            text = formatEndTime()
+            textSize = 14f
+            setTextColor(android.graphics.Color.WHITE)
+            typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        endTimeRow.addView(endTimeTextView)
+
+        timerCard.addView(endTimeRow)
+        container.addView(timerCard)
+
+        // Bottom apps container with rounded background
+        val appsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            ).apply {
+                bottomMargin = dpToPx(48)
             }
-            buttonContainer.addView(emergencyButton)
-        }
+            gravity = Gravity.CENTER
+            setPadding(dpToPx(20), dpToPx(16), dpToPx(20), dpToPx(16))
 
-        // Emergency call button - using custom view to avoid FLAG_NOT_FOCUSABLE text clipping
-        val callButton = createCustomButton(
-            text = "📞 Emergency Call",
-            backgroundColor = "#FFE53935",
-            marginBottom = 0
-        ) {
-            Log.d(TAG, "Emergency Call button clicked")
-            suspendForEmergency()
-            serviceScope.launch {
-                delay(100)
-                try {
-                    val dialerIntent = Intent(Intent.ACTION_DIAL).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
-                    }
-                    startActivity(dialerIntent)
-                    Log.d(TAG, "Dialer intent launched")
-                    delay(10000)
-                    if (brickSessionManager.isPhoneBricked()) {
-                        resumeAfterEmergency()
-                        Log.d(TAG, "Overlay resumed after dialer use")
-                    } else {
-                        resumeAfterEmergency()
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error launching dialer", e)
-                    resumeAfterEmergency()
-                }
+            // Rounded background for apps row
+            val appsBackground = android.graphics.drawable.GradientDrawable().apply {
+                setColor(android.graphics.Color.parseColor("#FF1E293B")) // Slate800
+                cornerRadius = dpToPx(24).toFloat()
             }
+            background = appsBackground
         }
-        buttonContainer.addView(callButton)
-        scrollContent.addView(buttonContainer)
 
-        scrollView.addView(scrollContent)
-        container.addView(scrollView)
+        // Load essential apps asynchronously
+        loadAndDisplayEssentialAppsNew(appsContainer)
+
+        container.addView(appsContainer)
+
+        // Update timer immediately
+        updateTimerDisplay()
 
         return container
+    }
+
+    private fun dpToPx(dp: Int): Int {
+        return (dp * resources.displayMetrics.density).toInt()
+    }
+
+    private fun formatCountdownTime(): String {
+        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
+        val hours = remainingSeconds / 3600
+        val minutes = (remainingSeconds % 3600) / 60
+        val seconds = remainingSeconds % 60
+        return String.format("%02d:%02d:%02d", hours, minutes, seconds)
+    }
+
+    private fun formatEndTime(): String {
+        val currentSession = brickSessionManager.getCurrentSession()
+        val endTime = currentSession?.currentSessionEndTime ?: (System.currentTimeMillis() + 60000)
+        val dateFormat = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
+        return dateFormat.format(Date(endTime))
+    }
+
+    private fun updateTimerDisplay() {
+        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
+        circularTimerView?.setProgress(remainingSeconds, totalSessionSeconds)
+        timeTextView?.text = formatCountdownTime()
+    }
+
+    /**
+     * Load essential apps - always shows Phone and Messages, plus user-added apps
+     */
+    private fun loadAndDisplayEssentialAppsNew(container: LinearLayout) {
+        serviceScope.launch {
+            try {
+                val displayedPackages = mutableSetOf<String>()
+
+                // Always show Phone first (try different package names)
+                val phonePackages = listOf(
+                    "com.google.android.dialer",
+                    "com.android.dialer",
+                    "com.samsung.android.dialer",
+                    "com.android.phone"
+                )
+                for (pkg in phonePackages) {
+                    if (tryAddAppIcon(container, pkg, displayedPackages)) break
+                }
+
+                // Always show Messages second
+                val messagePackages = listOf(
+                    "com.google.android.apps.messaging",
+                    "com.android.messaging",
+                    "com.samsung.android.messaging",
+                    "com.android.mms"
+                )
+                for (pkg in messagePackages) {
+                    if (tryAddAppIcon(container, pkg, displayedPackages)) break
+                }
+
+                // Add user-added essential apps (up to 3 more)
+                val essentialApps = essentialAppsManager.getAllEssentialApps().firstOrNull() ?: emptyList()
+                val userApps = essentialApps.filter { it.isUserAdded }
+
+                for (app in userApps.take(3)) {
+                    if (!displayedPackages.contains(app.packageName)) {
+                        tryAddAppIcon(container, app.packageName, displayedPackages)
+                    }
+                }
+
+                Log.d(TAG, "Displayed ${displayedPackages.size} essential apps")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading essential apps", e)
+            }
+        }
+    }
+
+    /**
+     * Try to add an app icon to the container. Returns true if successful.
+     */
+    private fun tryAddAppIcon(
+        container: LinearLayout,
+        packageName: String,
+        displayedPackages: MutableSet<String>
+    ): Boolean {
+        if (displayedPackages.contains(packageName)) return false
+
+        try {
+            val appInfo = packageManager.getApplicationInfo(packageName, 0)
+            val appIcon = packageManager.getApplicationIcon(appInfo)
+
+            val appButton = FrameLayout(this@BrickOverlayService).apply {
+                layoutParams = LinearLayout.LayoutParams(
+                    dpToPx(48),
+                    dpToPx(48)
+                ).apply {
+                    marginStart = dpToPx(8)
+                    marginEnd = dpToPx(8)
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    launchApp(packageName)
+                }
+            }
+
+            val iconView = ImageView(this@BrickOverlayService).apply {
+                setImageDrawable(appIcon)
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
+            appButton.addView(iconView)
+            container.addView(appButton)
+            displayedPackages.add(packageName)
+            Log.d(TAG, "Added essential app: $packageName")
+            return true
+
+        } catch (e: Exception) {
+            Log.d(TAG, "App not found: $packageName")
+            return false
+        }
     }
 
     private fun formatSessionTime(): String {
@@ -432,18 +579,28 @@ class BrickOverlayService : Service() {
         }
     }
 
+    @android.annotation.SuppressLint("NotificationPermission")
     private fun startOverlayUpdateLoop() {
         updateJob?.cancel()
         updateJob = serviceScope.launch {
+            var notificationUpdateCounter = 0
             while (isActive && isOverlayShowing) {
                 try {
-                    // Update notification
-                    val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    notificationManager.notify(NOTIFICATION_ID, createNotification())
-                    delay(30_000) // Update every 30 seconds
+                    // Update timer display every second
+                    updateTimerDisplay()
+
+                    // Update notification every 30 seconds
+                    notificationUpdateCounter++
+                    if (notificationUpdateCounter >= 30) {
+                        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        notificationManager.notify(NOTIFICATION_ID, createNotification())
+                        notificationUpdateCounter = 0
+                    }
+
+                    delay(1_000) // Update every second
                 } catch (e: Exception) {
-                    Log.e(TAG, "Error updating notification", e)
-                    delay(30_000)
+                    Log.e(TAG, "Error updating overlay", e)
+                    delay(1_000)
                 }
             }
         }
@@ -516,6 +673,7 @@ class BrickOverlayService : Service() {
         }
     }
 
+    @android.annotation.SuppressLint("NotificationPermission")
     private fun showPermissionNeededNotification() {
         try {
             // Create intent to open overlay permission settings

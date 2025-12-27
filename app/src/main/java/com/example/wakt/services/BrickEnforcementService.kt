@@ -25,6 +25,7 @@ class BrickEnforcementService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var enforcementJob: Job? = null
     private var isEnforcing = false
+    private var lastKnownForegroundApp: String? = null  // Cache to prevent flickering
     
     companion object {
         private const val TAG = "BrickEnforcementService"
@@ -129,6 +130,7 @@ class BrickEnforcementService : Service() {
             .build()
     }
     
+    @android.annotation.SuppressLint("NotificationPermission")
     private fun startEnforcement() {
         if (isEnforcing) return
 
@@ -150,14 +152,26 @@ class BrickEnforcementService : Service() {
                     }
 
                     // Simple logic: check foreground app and show/hide overlay accordingly
-                    val foregroundApp = getForegroundPackageName()
-                    Log.d(TAG, "=== ENFORCEMENT CHECK === Foreground: $foregroundApp")
+                    val currentForegroundApp = getForegroundPackageName()
 
-                    val isAppAllowed = brickSessionManager.isAppAllowedInCurrentSession(foregroundApp)
-                    Log.d(TAG, "Is allowed: $isAppAllowed")
+                    // If detection fails (null), use cached value to avoid flickering
+                    val foregroundApp = if (currentForegroundApp != null) {
+                        currentForegroundApp.also { lastKnownForegroundApp = it }
+                    } else {
+                        lastKnownForegroundApp
+                    }
+
+                    Log.d(TAG, "=== ENFORCEMENT CHECK === Foreground: $foregroundApp (detected: $currentForegroundApp)")
+
+                    // Check if it's an emergency app (dialer, settings, etc) or in allowedApps list
+                    val isEmergencyApp = isEmergencyOrEssentialApp(foregroundApp)
+                    val isSessionAllowed = brickSessionManager.isAppAllowedInCurrentSession(foregroundApp)
+                    val isAppAllowed = isEmergencyApp || isSessionAllowed
+
+                    Log.d(TAG, "Is allowed: $isAppAllowed (emergency: $isEmergencyApp, session: $isSessionAllowed)")
 
                     if (isAppAllowed) {
-                        // Allowed app in foreground - hide overlay
+                        // Allowed/emergency app in foreground - hide overlay
                         Log.d(TAG, "✓ Allowed app in foreground: $foregroundApp - HIDING overlay")
                         try {
                             BrickOverlayService.hideOverlay()
@@ -225,6 +239,31 @@ class BrickEnforcementService : Service() {
         val foreground = AppBlockingService.getForegroundPackageReliably()
         Log.d(TAG, "getForegroundPackageName: Found $foreground")
         return foreground
+    }
+
+    /**
+     * Check if app is an emergency or essential app that should always be allowed
+     * These apps bypass the allowedApps list check
+     */
+    private fun isEmergencyOrEssentialApp(packageName: String?): Boolean {
+        if (packageName.isNullOrBlank()) return false
+
+        // System essentials that should always be allowed
+        val emergencyPackages = listOf(
+            // Dialer apps
+            "com.android.dialer",
+            "com.google.android.dialer",
+            "com.samsung.android.dialer",
+            "com.android.phone",
+            // Settings and system
+            "com.android.systemui",
+            "com.android.settings",
+            // Emergency SOS
+            "com.android.emergency",
+            "com.samsung.android.emergencysos"
+        )
+
+        return emergencyPackages.any { packageName.startsWith(it) }
     }
 
     private fun stopEnforcement() {

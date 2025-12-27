@@ -1052,6 +1052,7 @@ class AppBlockingService : AccessibilityService() {
     /**
      * Show a notification when user tries to access blocked app during brick mode
      */
+    @android.annotation.SuppressLint("NotificationPermission")
     private fun showBrickModeViolationNotification(appName: String) {
         try {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -1086,8 +1087,11 @@ class AppBlockingService : AccessibilityService() {
                 .setTimeoutAfter(3000) // Auto-dismiss after 3 seconds
                 .build()
                 
-            // Show notification with unique ID based on app name
-            notificationManager.notify(appName.hashCode(), notification)
+            // Show notification with unique ID based on app name (check permission for Android 13+)
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                notificationManager.notify(appName.hashCode(), notification)
+            }
             
         } catch (e: Exception) {
             Log.e(TAG, "Error showing brick mode violation notification", e)
