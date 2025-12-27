@@ -18,8 +18,11 @@ import androidx.lifecycle.lifecycleScope
 import com.example.wakt.data.database.dao.BlockedItemDao
 import com.example.wakt.data.database.dao.GoalBlockDao
 import com.example.wakt.data.database.dao.GoalBlockItemDao
+import com.example.wakt.data.database.dao.PhoneBrickSessionDao
 import com.example.wakt.data.database.entity.BlockType
 import com.example.wakt.data.database.entity.ChallengeType
+import com.example.wakt.data.database.entity.PhoneBrickSession
+import java.util.Calendar
 import com.example.wakt.presentation.activities.BlockingOverlayActivity
 import com.example.wakt.presentation.activities.BrickBlockingOverlay
 import com.example.wakt.utils.TemporaryUnlock
@@ -41,7 +44,10 @@ class AppBlockingService : AccessibilityService() {
     
     @Inject
     lateinit var goalBlockItemDao: GoalBlockItemDao
-    
+
+    @Inject
+    lateinit var phoneBrickSessionDao: PhoneBrickSessionDao
+
     @Inject
     lateinit var temporaryUnlock: TemporaryUnlock
     
@@ -74,13 +80,30 @@ class AppBlockingService : AccessibilityService() {
         // Static reference to the service instance for clearing cooldowns and getting foreground package
         private var instance: AppBlockingService? = null
 
+        // Last known foreground package from accessibility events (fallback when other methods fail)
+        private var lastKnownForegroundPackage: String? = null
+
+        /**
+         * Update the last known foreground package (called from accessibility events)
+         */
+        fun updateLastForegroundPackage(packageName: String?) {
+            if (!packageName.isNullOrBlank()) {
+                lastKnownForegroundPackage = packageName
+                Log.d(TAG, "Updated lastKnownForegroundPackage: $packageName")
+            }
+        }
+
         /**
          * Get the foreground package name - single reliable source for all services
          * Uses UsageStatsManager (requires PACKAGE_USAGE_STATS permission and Usage Access grant)
          * Falls back to AccessibilityService if UsageStatsManager not available
          */
         fun getForegroundPackageReliably(): String? {
-            val context = instance ?: return null
+            val context = instance
+            if (context == null) {
+                Log.d(TAG, "getForegroundPackageReliably: instance is null, using lastKnown=$lastKnownForegroundPackage")
+                return lastKnownForegroundPackage
+            }
 
             // Method 1: UsageStatsManager (most reliable on modern Android)
             try {
@@ -110,18 +133,25 @@ class AppBlockingService : AccessibilityService() {
             }
 
             // Method 2: Fallback to AccessibilityService if UsageStatsManager unavailable
-            return try {
+            try {
                 val packageName = instance?.rootInActiveWindow?.packageName?.toString()
                 if (!packageName.isNullOrBlank()) {
                     Log.d(TAG, "getForegroundPackageReliably: Got from AccessibilityService: $packageName")
                     return packageName
                 }
                 Log.d(TAG, "getForegroundPackageReliably: AccessibilityService returned null")
-                null
             } catch (e: Exception) {
-                Log.e(TAG, "getForegroundPackageReliably: All methods failed: ${e.message}")
-                null
+                Log.e(TAG, "getForegroundPackageReliably: AccessibilityService failed: ${e.message}")
             }
+
+            // Method 3: Fallback to last known package from accessibility events
+            if (!lastKnownForegroundPackage.isNullOrBlank()) {
+                Log.d(TAG, "getForegroundPackageReliably: Using lastKnownForegroundPackage: $lastKnownForegroundPackage")
+                return lastKnownForegroundPackage
+            }
+
+            Log.d(TAG, "getForegroundPackageReliably: All methods failed, returning null")
+            return null
         }
         
         fun clearWebsiteCooldown(url: String, browserPackage: String) {
@@ -178,10 +208,15 @@ class AppBlockingService : AccessibilityService() {
     
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event?.let {
+            val packageName = it.packageName?.toString()
+
+            // Update last known foreground package for all window state changes
+            if (it.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && !packageName.isNullOrBlank()) {
+                updateLastForegroundPackage(packageName)
+            }
+
             // PRIORITY: Check brick mode for ALL events
             if (brickSessionManager.isPhoneBricked()) {
-                val packageName = it.packageName?.toString()
-
                 // Always allow our own app
                 if (packageName == applicationContext.packageName) {
                     return
@@ -457,28 +492,56 @@ class AppBlockingService : AccessibilityService() {
                         }
                     }
                 } else null
-                
-                // Use whichever block was found (priority to regular blocks)
-                val activeBlock = blockedApp ?: goalBlock
-                
-                if (activeBlock != null) {
+
+                // Check scheduled app blocks if no regular or goal block found
+                val scheduledBlock = if (blockedApp == null && goalBlock == null) {
+                    withContext(Dispatchers.IO) {
+                        val appSchedules = phoneBrickSessionDao.getActiveAppSchedulesForPackage(packageName)
+                        appSchedules.find { schedule ->
+                            isCurrentTimeInScheduleWindow(schedule)
+                        }
+                    }
+                } else null
+
+                // Use whichever block was found (priority: regular > goal > scheduled)
+                val hasBlock = blockedApp != null || goalBlock != null || scheduledBlock != null
+
+                if (hasBlock) {
                     // Check if temporarily unlocked
                     if (temporaryUnlock.isTemporarilyUnlocked(packageName)) {
                         Log.d(TAG, "App $packageName is temporarily unlocked")
                         return@launch
                     }
-                    
+
                     val isGoalBlock = goalBlock != null
-                    Log.d(TAG, "Blocked app detected: $packageName (Goal: $isGoalBlock)")
+                    val isScheduledBlock = scheduledBlock != null
+                    Log.d(TAG, "Blocked app detected: $packageName (Goal: $isGoalBlock, Scheduled: $isScheduledBlock)")
                     activeBlockedApps.add(packageName)
                     blockedAppCooldown[packageName] = currentTime
-                    
-                    // Use appropriate challenge data
-                    val challengeType = if (blockedApp != null) blockedApp.challengeType else goalBlock!!.challengeType
-                    val challengeData = if (blockedApp != null) blockedApp.challengeData else goalBlock!!.challengeData
-                    val name = if (blockedApp != null) blockedApp.name else goalBlock!!.name
-                    
-                    triggerAppBlocking(name, packageName, challengeType, challengeData, isGoalBlock)
+
+                    // Use appropriate challenge data based on block type
+                    val challengeType = when {
+                        blockedApp != null -> blockedApp.challengeType
+                        goalBlock != null -> goalBlock.challengeType
+                        else -> scheduledBlock!!.challengeType
+                    }
+                    val challengeData = when {
+                        blockedApp != null -> blockedApp.challengeData
+                        goalBlock != null -> goalBlock.challengeData
+                        else -> scheduledBlock!!.challengeData
+                    }
+                    val name = when {
+                        blockedApp != null -> blockedApp.name
+                        goalBlock != null -> goalBlock.name
+                        else -> scheduledBlock!!.name
+                    }
+
+                    // For scheduled blocks, pass the schedule end time
+                    val scheduleEndTime = if (isScheduledBlock) {
+                        calculateScheduleEndTime(scheduledBlock!!)
+                    } else 0L
+
+                    triggerAppBlocking(name, packageName, challengeType, challengeData, isGoalBlock, isScheduledBlock, scheduleEndTime)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error checking blocked apps", e)
@@ -594,10 +657,12 @@ class AppBlockingService : AccessibilityService() {
         packageName: String,
         challengeType: ChallengeType,
         challengeData: String,
-        isGoalBlock: Boolean = false
+        isGoalBlock: Boolean = false,
+        isScheduledBlock: Boolean = false,
+        scheduleEndTime: Long = 0L
     ) {
-        Log.d(TAG, "Triggering app blocking for: $appName ($packageName)")
-        
+        Log.d(TAG, "Triggering app blocking for: $appName ($packageName), scheduled=$isScheduledBlock")
+
         // First show blocking overlay
         val intent = Intent(this, BlockingOverlayActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK or
@@ -607,9 +672,11 @@ class AppBlockingService : AccessibilityService() {
             putExtra("challenge_type", challengeType.name)
             putExtra("challenge_data", challengeData)
             putExtra("is_goal_block", isGoalBlock)
+            putExtra("is_scheduled_block", isScheduledBlock)
+            putExtra("schedule_end_time", scheduleEndTime)
         }
         startActivity(intent)
-        
+
         // Keep monitoring this app but don't force home (which dismisses overlay)
         activeBlockedApps.add(packageName)
     }
@@ -1101,7 +1168,7 @@ class AppBlockingService : AccessibilityService() {
     private fun formatRemainingTimeShort(): String {
         val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
         val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes() ?: 0
-        
+
         return when {
             remainingMinutes >= 60 -> {
                 val hours = remainingMinutes / 60
@@ -1117,8 +1184,66 @@ class AppBlockingService : AccessibilityService() {
             else -> "Ending now"
         }
     }
-    
-    
+
+    /**
+     * Check if the current time falls within a schedule's time window
+     */
+    private fun isCurrentTimeInScheduleWindow(schedule: PhoneBrickSession): Boolean {
+        val now = Calendar.getInstance()
+        val currentHour = now.get(Calendar.HOUR_OF_DAY)
+        val currentMinute = now.get(Calendar.MINUTE)
+        val currentDayOfWeek = now.get(Calendar.DAY_OF_WEEK) // 1=Sun, 7=Sat
+
+        // Convert to our format (1=Mon, 7=Sun)
+        val dayOfWeek = if (currentDayOfWeek == 1) 7 else currentDayOfWeek - 1
+
+        // Check if today is an active day
+        if (!schedule.activeDaysOfWeek.contains(dayOfWeek.toString())) {
+            return false
+        }
+
+        val startHour = schedule.startHour ?: return false
+        val startMinute = schedule.startMinute ?: return false
+        val endHour = schedule.endHour ?: return false
+        val endMinute = schedule.endMinute ?: return false
+
+        val currentMinutes = currentHour * 60 + currentMinute
+        val startMinutes = startHour * 60 + startMinute
+        val endMinutes = endHour * 60 + endMinute
+
+        // Handle overnight schedules (e.g., 22:00 - 06:00)
+        return if (startMinutes <= endMinutes) {
+            // Same day schedule (e.g., 09:00 - 17:00)
+            currentMinutes >= startMinutes && currentMinutes < endMinutes
+        } else {
+            // Overnight schedule (e.g., 22:00 - 06:00)
+            currentMinutes >= startMinutes || currentMinutes < endMinutes
+        }
+    }
+
+    /**
+     * Calculate the end time for a scheduled block in milliseconds
+     */
+    private fun calculateScheduleEndTime(schedule: PhoneBrickSession): Long {
+        val now = Calendar.getInstance()
+        val endHour = schedule.endHour ?: return 0
+        val endMinute = schedule.endMinute ?: return 0
+
+        val endTime = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, endHour)
+            set(Calendar.MINUTE, endMinute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+
+            // If end time is before current time, it's tomorrow (overnight schedule)
+            if (this.before(now)) {
+                add(Calendar.DAY_OF_MONTH, 1)
+            }
+        }
+
+        return endTime.timeInMillis
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         instance = null

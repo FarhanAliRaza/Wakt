@@ -85,6 +85,16 @@ interface PhoneBrickSessionDao {
     @Query("UPDATE phone_brick_sessions SET isActive = 0 WHERE id = :id")
     suspend fun deactivateSession(id: Long)
     
-    @Query("UPDATE phone_brick_sessions SET isActive = 1 WHERE id = :id") 
+    @Query("UPDATE phone_brick_sessions SET isActive = 1 WHERE id = :id")
     suspend fun activateSession(id: Long)
+
+    // Get active app schedules that include a specific package
+    @Query("""
+        SELECT * FROM phone_brick_sessions
+        WHERE isActive = 1
+        AND sessionType = 'SLEEP_SCHEDULE'
+        AND scheduleTargetType = 'APPS'
+        AND targetPackages LIKE '%' || :packageName || '%'
+    """)
+    suspend fun getActiveAppSchedulesForPackage(packageName: String): List<PhoneBrickSession>
 }

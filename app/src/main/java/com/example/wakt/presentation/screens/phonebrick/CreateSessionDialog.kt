@@ -2,6 +2,7 @@ package com.example.wakt.presentation.screens.phonebrick
 
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -842,7 +843,8 @@ private fun EssentialAppsSelectionButton(
         
         OutlinedButton(
             onClick = { showAppSelector = true },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
             Icon(
                 imageVector = Icons.Default.Check,

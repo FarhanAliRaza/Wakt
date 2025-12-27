@@ -27,7 +27,7 @@ import com.example.wakt.data.database.entity.BrickSessionLog
         EssentialApp::class,
         BrickSessionLog::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -155,6 +155,27 @@ abstract class WaktDatabase : RoomDatabase() {
                 // Add allowedApps column to phone_brick_sessions table
                 database.execSQL("""
                     ALTER TABLE phone_brick_sessions ADD COLUMN allowedApps TEXT NOT NULL DEFAULT ''
+                """)
+            }
+        }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Add schedule-specific columns to phone_brick_sessions table
+                database.execSQL("""
+                    ALTER TABLE phone_brick_sessions ADD COLUMN scheduleTargetType TEXT NOT NULL DEFAULT 'PHONE'
+                """)
+                database.execSQL("""
+                    ALTER TABLE phone_brick_sessions ADD COLUMN targetPackages TEXT NOT NULL DEFAULT ''
+                """)
+                database.execSQL("""
+                    ALTER TABLE phone_brick_sessions ADD COLUMN reminderEnabled INTEGER NOT NULL DEFAULT 0
+                """)
+                database.execSQL("""
+                    ALTER TABLE phone_brick_sessions ADD COLUMN reminderMinutesBefore INTEGER NOT NULL DEFAULT 15
+                """)
+                database.execSQL("""
+                    ALTER TABLE phone_brick_sessions ADD COLUMN vibrate INTEGER NOT NULL DEFAULT 1
                 """)
             }
         }

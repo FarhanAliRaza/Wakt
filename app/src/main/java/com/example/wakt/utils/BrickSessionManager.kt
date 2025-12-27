@@ -194,6 +194,8 @@ class BrickSessionManager @Inject constructor(
     
     /**
      * Check for scheduled sessions that should be active now
+     * NOTE: We intentionally DO NOT auto-start sessions. Sessions should only start
+     * with explicit user action for safety. This function only logs for debugging.
      */
     private suspend fun checkScheduledSessions() {
         try {
@@ -201,21 +203,28 @@ class BrickSessionManager @Inject constructor(
             val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK).toString() // 1=Sunday, 2=Monday, etc.
             val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
             val currentMinute = calendar.get(Calendar.MINUTE)
-            
+
             val sessions = phoneBrickSessionDao.getSessionsForDay(dayOfWeek)
-            
+
+            Log.d(TAG, "checkScheduledSessions: Found ${sessions.size} sessions for day $dayOfWeek")
+
             for (session in sessions) {
-                if (session.sessionType == BrickSessionType.SLEEP_SCHEDULE && 
+                if (session.sessionType == BrickSessionType.SLEEP_SCHEDULE &&
                     !session.isCurrentlyBricked &&
-                    session.startHour != null && 
+                    session.startHour != null &&
                     session.endHour != null) {
-                    
-                    if (isTimeInScheduleWindow(currentHour, currentMinute, session)) {
-                        startScheduledSession(session)
-                    }
+
+                    val isInWindow = isTimeInScheduleWindow(currentHour, currentMinute, session)
+                    Log.d(TAG, "Schedule '${session.name}' (${session.startHour}:${session.startMinute} - ${session.endHour}:${session.endMinute}): " +
+                        "current=$currentHour:$currentMinute, inWindow=$isInWindow")
+
+                    // SAFETY: DO NOT auto-start sessions! This was causing the dangerous auto-lock bug.
+                    // Sessions should only start with explicit user action.
+                    // If we need to notify the user about a schedule, we should show a notification
+                    // that they can tap to start the session manually.
                 }
             }
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "Error checking scheduled sessions", e)
         }
@@ -223,27 +232,47 @@ class BrickSessionManager @Inject constructor(
     
     /**
      * Check if current time is within a scheduled session window
+     * Returns false for invalid schedules (e.g., start == end)
      */
     private fun isTimeInScheduleWindow(
-        currentHour: Int, 
-        currentMinute: Int, 
+        currentHour: Int,
+        currentMinute: Int,
         session: PhoneBrickSession
     ): Boolean {
-        val startHour = session.startHour!!
-        val startMinute = session.startMinute!!
-        val endHour = session.endHour!!
-        val endMinute = session.endMinute!!
-        
+        val startHour = session.startHour ?: return false
+        val startMinute = session.startMinute ?: 0
+        val endHour = session.endHour ?: return false
+        val endMinute = session.endMinute ?: 0
+
         val currentTotalMinutes = currentHour * 60 + currentMinute
         val startTotalMinutes = startHour * 60 + startMinute
         val endTotalMinutes = endHour * 60 + endMinute
-        
+
+        // SAFETY: If start and end times are the same, this is an invalid schedule
+        // Return false to prevent matching at all times
+        if (startTotalMinutes == endTotalMinutes) {
+            Log.w(TAG, "Invalid schedule: start time equals end time (${startHour}:${startMinute})")
+            return false
+        }
+
+        // SAFETY: Require at least 5 minutes duration for valid schedules
+        val duration = if (endTotalMinutes > startTotalMinutes) {
+            endTotalMinutes - startTotalMinutes
+        } else {
+            // Crosses midnight
+            (24 * 60 - startTotalMinutes) + endTotalMinutes
+        }
+        if (duration < 5) {
+            Log.w(TAG, "Invalid schedule: duration too short (${duration} minutes)")
+            return false
+        }
+
         return if (endTotalMinutes > startTotalMinutes) {
             // Same day (e.g., 9 AM to 5 PM)
-            currentTotalMinutes in startTotalMinutes..endTotalMinutes
+            currentTotalMinutes in startTotalMinutes until endTotalMinutes
         } else {
             // Crosses midnight (e.g., 11 PM to 6 AM)
-            currentTotalMinutes >= startTotalMinutes || currentTotalMinutes <= endTotalMinutes
+            currentTotalMinutes >= startTotalMinutes || currentTotalMinutes < endTotalMinutes
         }
     }
     

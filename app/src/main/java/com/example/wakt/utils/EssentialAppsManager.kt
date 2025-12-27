@@ -62,20 +62,27 @@ class EssentialAppsManager @Inject constructor(
     }
     
     /**
-     * Initialize system essential apps if they don't exist
+     * Initialize system essential apps - adds any missing essential apps
      */
     private fun initializeSystemEssentialApps() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val count = essentialAppDao.getSystemEssentialAppsCount()
-                if (count == 0) {
-                    // Insert default system essential apps
-                    val systemApps = DefaultEssentialApps.SYSTEM_ESSENTIALS
-                        .filter { isPackageInstalled(it.packageName) }
-                        .map { it.copy(id = 0) } // Reset ID for insertion
-                    
-                    essentialAppDao.insertEssentialApps(systemApps)
-                    Log.i(TAG, "Initialized ${systemApps.size} system essential apps")
+                val existingApps = essentialAppDao.getAllEssentialAppsList()
+                val existingPackages = existingApps.map { it.packageName }.toSet()
+
+                // Find installed system apps that aren't in the database yet
+                val missingApps = DefaultEssentialApps.SYSTEM_ESSENTIALS
+                    .filter { isPackageInstalled(it.packageName) }
+                    .filter { it.packageName !in existingPackages }
+                    .map { it.copy(id = 0) } // Reset ID for insertion
+
+                if (missingApps.isNotEmpty()) {
+                    essentialAppDao.insertEssentialApps(missingApps)
+                    Log.i(TAG, "Added ${missingApps.size} missing system essential apps: ${missingApps.map { it.packageName }}")
+                    // Refresh cache after adding new apps
+                    loadEssentialAppsCache()
+                } else {
+                    Log.d(TAG, "All system essential apps already initialized (${existingApps.size} total)")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing system essential apps", e)
@@ -118,7 +125,10 @@ class EssentialAppsManager @Inject constructor(
      * Check if an app is essential (for any session type)
      */
     suspend fun isAppEssential(packageName: String): Boolean {
-        return essentialAppDao.getEssentialAppByPackage(packageName) != null
+        val app = essentialAppDao.getEssentialAppByPackage(packageName)
+        val isEssential = app != null
+        Log.d(TAG, "isAppEssential($packageName): found=$isEssential, app=${app?.appName}")
+        return isEssential
     }
     
     /**

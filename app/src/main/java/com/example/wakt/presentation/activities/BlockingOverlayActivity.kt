@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.OnBackPressedCallback
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -33,32 +34,34 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class BlockingOverlayActivity : ComponentActivity() {
-    
+
     private var isWebsiteBlock = false
     private var websiteUrl: String? = null
     private var packageName: String? = null
     private var hasTriggeredDismissal = false  // Track if we've already handled dismissal
-    
+
     @Inject
     lateinit var temporaryUnlock: TemporaryUnlock
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         val appName = intent.getStringExtra("app_name") ?: "Unknown App"
         packageName = intent.getStringExtra("package_name") ?: ""
         websiteUrl = intent.getStringExtra("website_url")
         isWebsiteBlock = intent.getBooleanExtra("is_website_block", false)
         val isGoalBlock = intent.getBooleanExtra("is_goal_block", false)
+        val isScheduledBlock = intent.getBooleanExtra("is_scheduled_block", false)
+        val scheduleEndTime = intent.getLongExtra("schedule_end_time", 0L)
         val challengeTypeString = intent.getStringExtra("challenge_type") ?: "WAIT"
         val challengeData = intent.getStringExtra("challenge_data") ?: "10"
-        
+
         val challengeType = try {
             ChallengeType.valueOf(challengeTypeString)
         } catch (e: Exception) {
             ChallengeType.WAIT
         }
-        
+
         // Handle back button press with modern approach
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -66,7 +69,7 @@ class BlockingOverlayActivity : ComponentActivity() {
                 finish()
             }
         })
-        
+
         setContent {
             WaktTheme {
                 BlockingOverlayScreen(
@@ -75,17 +78,24 @@ class BlockingOverlayActivity : ComponentActivity() {
                     websiteUrl = websiteUrl,
                     isWebsiteBlock = isWebsiteBlock,
                     isGoalBlock = isGoalBlock,
+                    isScheduledBlock = isScheduledBlock,
+                    scheduleEndTime = scheduleEndTime,
                     challengeType = challengeType,
                     challengeData = challengeData,
                     onUnblockComplete = { minutes ->
                         val identifier = if (isWebsiteBlock) websiteUrl ?: packageName!! else packageName!!
                         temporaryUnlock.createTemporaryUnlock(identifier, minutes)
                         handleDismissal()
-                        finish() 
+                        finish()
                     },
-                    onCancel = { 
+                    onCancel = {
                         handleDismissal()
-                        finish() 
+                        finish()
+                    },
+                    onScheduleEnded = {
+                        // Auto-dismiss when schedule ends
+                        handleDismissal()
+                        finish()
                     }
                 )
             }
@@ -119,19 +129,29 @@ fun BlockingOverlayScreen(
     websiteUrl: String? = null,
     isWebsiteBlock: Boolean = false,
     isGoalBlock: Boolean = false,
+    isScheduledBlock: Boolean = false,
+    scheduleEndTime: Long = 0L,
     challengeType: ChallengeType,
     challengeData: String,
     onUnblockComplete: (Int) -> Unit,
     onCancel: () -> Unit,
+    onScheduleEnded: () -> Unit = {},
     viewModel: BlockingOverlayViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    
-    LaunchedEffect(challengeType, challengeData, packageName, websiteUrl) {
+
+    LaunchedEffect(challengeType, challengeData, packageName, websiteUrl, isScheduledBlock, scheduleEndTime) {
         val identifier = if (isWebsiteBlock) websiteUrl ?: packageName else packageName
-        viewModel.initializeChallenge(identifier, challengeType, challengeData)
+        viewModel.initializeChallenge(identifier, challengeType, challengeData, isScheduledBlock, scheduleEndTime)
     }
-    
+
+    // Auto-dismiss when schedule ends
+    LaunchedEffect(uiState.scheduleEnded) {
+        if (uiState.scheduleEnded) {
+            onScheduleEnded()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -156,25 +176,59 @@ fun BlockingOverlayScreen(
                     modifier = Modifier.size(64.dp),
                     tint = MaterialTheme.colorScheme.error
                 )
-                
+
                 Text(
-                    text = if (isWebsiteBlock) "Website Blocked" else "App Blocked",
+                    text = when {
+                        isScheduledBlock -> "Scheduled Block"
+                        isWebsiteBlock -> "Website Blocked"
+                        else -> "App Blocked"
+                    },
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center
                 )
-                
+
                 Text(
-                    text = if (isWebsiteBlock) {
-                        "You've blocked access to this website:\n${websiteUrl ?: appName}"
-                    } else {
-                        "You've blocked access to $appName"
+                    text = when {
+                        isScheduledBlock -> "This app is blocked by your schedule"
+                        isWebsiteBlock -> "You've blocked access to this website:\n${websiteUrl ?: appName}"
+                        else -> "You've blocked access to $appName"
                     },
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                
+
+                // Show schedule info for scheduled blocks
+                if (isScheduledBlock && scheduleEndTime > 0) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                "Blocked until ${uiState.scheduleEndTimeFormatted}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (uiState.scheduleRemainingSeconds > 0) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    "${formatScheduleTime(uiState.scheduleRemainingSeconds)} remaining",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+                    }
+                }
+
                 if (isGoalBlock) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -188,7 +242,7 @@ fun BlockingOverlayScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "🎯 LONG-TERM GOAL BLOCK",
+                                "LONG-TERM GOAL BLOCK",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.error,
                                 fontWeight = FontWeight.Bold
@@ -203,9 +257,9 @@ fun BlockingOverlayScreen(
                         )
                     }
                 }
-                
+
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                
+
                 when (challengeType) {
                     ChallengeType.WAIT -> {
                         WaitTimerChallenge(
@@ -227,24 +281,37 @@ fun BlockingOverlayScreen(
 
                     ChallengeType.QUESTION -> TODO()
                 }
-                
+
                 Spacer(modifier = Modifier.height(8.dp))
-                
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     OutlinedButton(
                         onClick = onCancel,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                     ) {
                         Text("Cancel")
                     }
-                    
+
                     // Remove the old continue button - now handled in the challenge components
                 }
             }
         }
+    }
+}
+
+private fun formatScheduleTime(seconds: Long): String {
+    val hours = seconds / 3600
+    val minutes = (seconds % 3600) / 60
+    val secs = seconds % 60
+
+    return when {
+        hours > 0 -> String.format("%dh %02dm", hours, minutes)
+        minutes > 0 -> String.format("%dm %02ds", minutes, secs)
+        else -> String.format("%ds", secs)
     }
 }
 

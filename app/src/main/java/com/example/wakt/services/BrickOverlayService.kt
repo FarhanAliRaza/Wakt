@@ -84,6 +84,11 @@ class BrickOverlayService : Service() {
             Log.d(TAG, "BrickOverlayService stopped")
         }
 
+        // Track the last launched app and timestamp to prevent overlay from re-showing immediately
+        private var lastLaunchedApp: String? = null
+        private var lastLaunchTime: Long = 0
+        private const val LAUNCH_GRACE_PERIOD_MS = 10000L // 10 seconds grace period
+
         fun hideOverlay() {
             instance?.hideOverlay()
             Log.d(TAG, "Overlay hidden by enforcement service")
@@ -92,6 +97,35 @@ class BrickOverlayService : Service() {
         fun showOverlay() {
             instance?.showOverlay()
             Log.d(TAG, "Overlay shown by enforcement service")
+        }
+
+        /**
+         * Check if we recently launched an allowed app and should NOT show the overlay
+         */
+        fun isInLaunchGracePeriod(): Boolean {
+            val elapsed = System.currentTimeMillis() - lastLaunchTime
+            val inGrace = lastLaunchedApp != null && elapsed < LAUNCH_GRACE_PERIOD_MS
+            if (inGrace) {
+                Log.d(TAG, "In launch grace period for $lastLaunchedApp (${elapsed}ms elapsed)")
+            }
+            return inGrace
+        }
+
+        /**
+         * Record that we launched an allowed app
+         */
+        fun recordAppLaunch(packageName: String) {
+            lastLaunchedApp = packageName
+            lastLaunchTime = System.currentTimeMillis()
+            Log.d(TAG, "Recorded app launch: $packageName")
+        }
+
+        /**
+         * Clear the launch grace period (e.g., when user returns to home)
+         */
+        fun clearLaunchGracePeriod() {
+            lastLaunchedApp = null
+            lastLaunchTime = 0
         }
 
         fun suspendForEmergency() {
@@ -409,6 +443,63 @@ class BrickOverlayService : Service() {
         endTimeRow.addView(endTimeTextView)
 
         timerCard.addView(endTimeRow)
+
+        // Emergency exit button - only show if session allows emergency override
+        if (currentSession?.allowEmergencyOverride == true) {
+            val emergencyButton = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    topMargin = dpToPx(24)
+                }
+                setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12))
+                isClickable = true
+                isFocusable = true
+
+                // Rounded border background (outlined button style)
+                val buttonBackground = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(android.graphics.Color.TRANSPARENT)
+                    setStroke(dpToPx(1), android.graphics.Color.parseColor("#FFEF4444")) // Red border
+                    cornerRadius = dpToPx(8).toFloat()
+                }
+                background = buttonBackground
+
+                setOnClickListener {
+                    launchEmergencyOverride()
+                }
+            }
+
+            // Warning icon (using text as placeholder since we can't use vector drawables easily)
+            val warningIcon = TextView(this).apply {
+                text = "⚠️"
+                textSize = 16f
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    marginEnd = dpToPx(8)
+                }
+            }
+            emergencyButton.addView(warningIcon)
+
+            val emergencyText = TextView(this).apply {
+                text = "Emergency Exit"
+                textSize = 14f
+                setTextColor(android.graphics.Color.parseColor("#FFEF4444")) // Red text
+                typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            }
+            emergencyButton.addView(emergencyText)
+
+            timerCard.addView(emergencyButton)
+        }
+
         container.addView(timerCard)
 
         // Bottom apps container with rounded background
@@ -656,6 +747,9 @@ class BrickOverlayService : Service() {
             if (intent != null) {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
 
+                // Record the launch BEFORE hiding overlay - this prevents enforcement from re-showing
+                recordAppLaunch(packageName)
+
                 // Hide overlay immediately to let app come to foreground
                 hideOverlay()
                 Log.d(TAG, "Hidden overlay to launch allowed app: $packageName")
@@ -670,6 +764,18 @@ class BrickOverlayService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error launching app $packageName", e)
+        }
+    }
+
+    private fun launchEmergencyOverride() {
+        try {
+            val intent = Intent(this, EmergencyOverrideActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+            Log.d(TAG, "Launched EmergencyOverrideActivity")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error launching EmergencyOverrideActivity", e)
         }
     }
 

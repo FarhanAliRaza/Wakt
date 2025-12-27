@@ -26,11 +26,22 @@ data class PhoneBrickSession(
     val challengeType: ChallengeType = ChallengeType.WAIT,
     val challengeData: String = "5", // Minutes to wait for emergency override
     val allowEmergencyOverride: Boolean = true, // Always enabled for safety
-    val allowedApps: String = "" // Session-specific allowed apps (comma-separated package names)
+    val allowedApps: String = "", // Session-specific allowed apps (comma-separated package names)
+    // Schedule-specific fields
+    val scheduleTargetType: ScheduleTargetType = ScheduleTargetType.PHONE,
+    val targetPackages: String = "", // For APP type schedules (comma-separated)
+    val reminderEnabled: Boolean = false, // Show notification before lock starts
+    val reminderMinutesBefore: Int = 15, // Minutes before lock to remind
+    val vibrate: Boolean = true // Vibrate on lock start
 )
 
 enum class BrickSessionType {
     FOCUS_SESSION, // Duration-based (10 min - 4 hours)
     SLEEP_SCHEDULE, // Time-window based (e.g., 11 PM - 6 AM daily)
     DIGITAL_DETOX // Extended duration-based (4-24 hours)
+}
+
+enum class ScheduleTargetType {
+    PHONE, // Lock entire phone
+    APPS   // Block specific apps
 }

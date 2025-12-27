@@ -5,6 +5,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.OnBackPressedCallback
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -82,7 +83,14 @@ fun EmergencyOverrideScreen(
     viewModel: EmergencyOverrideViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    
+
+    // Watch for override completion and finish the activity
+    LaunchedEffect(uiState.overrideCompleted) {
+        if (uiState.overrideCompleted) {
+            onEmergencyComplete()
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -109,7 +117,7 @@ fun EmergencyOverrideScreen(
                     modifier = Modifier.size(64.dp),
                     tint = MaterialTheme.colorScheme.error
                 )
-                
+
                 Text(
                     text = "⚠️ EMERGENCY OVERRIDE",
                     style = MaterialTheme.typography.headlineMedium,
@@ -117,16 +125,16 @@ fun EmergencyOverrideScreen(
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.error
                 )
-                
+
                 Text(
                     text = "You are requesting to break your focus session early. This should only be used for genuine emergencies.",
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onErrorContainer
                 )
-                
+
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                
+
                 when (uiState.currentStep) {
                     EmergencyStep.CONFIRMATION -> {
                         EmergencyConfirmationStep(
@@ -139,10 +147,10 @@ fun EmergencyOverrideScreen(
                             challengeType = uiState.challengeType,
                             remainingTimeSeconds = uiState.challengeTimeRemaining,
                             clicksRemaining = uiState.clicksRemaining,
+                            challengeCompleted = uiState.challengeCompleted,
                             onChallengeComplete = { viewModel.completeChallenge() },
                             onClickRecord = { viewModel.recordClick() },
-                            onCancel = onCancel,
-                            onEmergencyComplete = onEmergencyComplete
+                            onCancel = onCancel
                         )
                     }
                     EmergencyStep.REASON -> {
@@ -170,16 +178,16 @@ private fun EmergencyConfirmationStep(
             textAlign = TextAlign.Center,
             fontWeight = FontWeight.SemiBold
         )
-        
+
         Text(
             text = "This action will be logged and will count against your session completion rate.",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
         )
-        
+
         Spacer(modifier = Modifier.height(16.dp))
-        
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -189,11 +197,12 @@ private fun EmergencyConfirmationStep(
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.onErrorContainer
-                )
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.onErrorContainer)
             ) {
                 Text("Cancel")
             }
-            
+
             Button(
                 onClick = onConfirm,
                 modifier = Modifier.weight(1f),
@@ -212,18 +221,11 @@ private fun EmergencyChallengeStep(
     challengeType: ChallengeType,
     remainingTimeSeconds: Int,
     clicksRemaining: Int,
+    challengeCompleted: Boolean,
     onChallengeComplete: () -> Unit,
     onClickRecord: () -> Unit,
-    onCancel: () -> Unit,
-    onEmergencyComplete: () -> Unit = {}
+    onCancel: () -> Unit
 ) {
-    // When challenge completes, close the activity
-    LaunchedEffect(clicksRemaining) {
-        if (clicksRemaining <= 0) {
-            delay(500) // Brief delay to show completion message
-            onEmergencyComplete()
-        }
-    }
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -300,6 +302,7 @@ private fun EmergencyChallengeStep(
                     modifier = Modifier
                         .size(140.dp)
                         .padding(8.dp),
+                    enabled = !challengeCompleted,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
                     )
@@ -313,9 +316,9 @@ private fun EmergencyChallengeStep(
                 }
 
                 // Show completion message when done
-                if (clicksRemaining <= 0) {
+                if (challengeCompleted) {
                     Text(
-                        text = "✓ Challenge complete!",
+                        text = "✓ Challenge complete! Ending session...",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.Bold
@@ -330,13 +333,16 @@ private fun EmergencyChallengeStep(
             }
         }
 
-        OutlinedButton(
-            onClick = onCancel,
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.onErrorContainer
-            )
-        ) {
-            Text("Cancel Override")
+        if (!challengeCompleted) {
+            OutlinedButton(
+                onClick = onCancel,
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.onErrorContainer)
+            ) {
+                Text("Cancel Override")
+            }
         }
     }
 }
@@ -384,11 +390,12 @@ private fun EmergencyReasonStep(
                 modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.outlinedButtonColors(
                     contentColor = MaterialTheme.colorScheme.onErrorContainer
-                )
+                ),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.onErrorContainer)
             ) {
                 Text("Cancel")
             }
-            
+
             Button(
                 onClick = onConfirm,
                 modifier = Modifier.weight(1f),

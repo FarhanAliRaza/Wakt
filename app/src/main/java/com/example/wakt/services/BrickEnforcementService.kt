@@ -12,8 +12,10 @@ import com.example.wakt.R
 import com.example.wakt.presentation.activities.BrickLauncherActivity
 import com.example.wakt.presentation.activities.EmergencyOverrideActivity
 import com.example.wakt.utils.BrickSessionManager
+import com.example.wakt.utils.EssentialAppsManager
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.firstOrNull
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -21,7 +23,10 @@ class BrickEnforcementService : Service() {
     
     @Inject
     lateinit var brickSessionManager: BrickSessionManager
-    
+
+    @Inject
+    lateinit var essentialAppsManager: EssentialAppsManager
+
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var enforcementJob: Job? = null
     private var isEnforcing = false
@@ -138,6 +143,17 @@ class BrickEnforcementService : Service() {
         enforcementJob = serviceScope.launch {
             Log.d(TAG, "Starting brick session enforcement with overlay service")
 
+            // Debug: dump all essential apps from database
+            try {
+                val essentialApps = essentialAppsManager.getAllEssentialApps().firstOrNull() ?: emptyList()
+                Log.d(TAG, "=== ESSENTIAL APPS IN DATABASE (${essentialApps.size} total) ===")
+                essentialApps.forEach { app ->
+                    Log.d(TAG, "  - ${app.appName}: ${app.packageName} (active=${app.isActive})")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error dumping essential apps", e)
+            }
+
             var notificationUpdateCounter = 0
 
             while (isActive && isEnforcing) {
@@ -162,6 +178,13 @@ class BrickEnforcementService : Service() {
                     }
 
                     Log.d(TAG, "=== ENFORCEMENT CHECK === Foreground: $foregroundApp (detected: $currentForegroundApp)")
+
+                    // Check if we're in a grace period from launching an allowed app
+                    if (BrickOverlayService.isInLaunchGracePeriod()) {
+                        Log.d(TAG, "✓ In launch grace period - NOT showing overlay")
+                        delay(ENFORCEMENT_INTERVAL_MS)
+                        continue
+                    }
 
                     // Check if it's an emergency app (dialer, settings, etc) or in allowedApps list
                     val isEmergencyApp = isEmergencyOrEssentialApp(foregroundApp)
@@ -243,27 +266,30 @@ class BrickEnforcementService : Service() {
 
     /**
      * Check if app is an emergency or essential app that should always be allowed
-     * These apps bypass the allowedApps list check
+     * Checks user's essential apps from database (includes Phone, Messages, user-selected apps)
      */
-    private fun isEmergencyOrEssentialApp(packageName: String?): Boolean {
-        if (packageName.isNullOrBlank()) return false
+    private suspend fun isEmergencyOrEssentialApp(packageName: String?): Boolean {
+        if (packageName.isNullOrBlank()) {
+            Log.d(TAG, "isEmergencyOrEssentialApp: packageName is null or blank")
+            return false
+        }
 
-        // System essentials that should always be allowed
-        val emergencyPackages = listOf(
-            // Dialer apps
-            "com.android.dialer",
-            "com.google.android.dialer",
-            "com.samsung.android.dialer",
-            "com.android.phone",
-            // Settings and system
-            "com.android.systemui",
-            "com.android.settings",
-            // Emergency SOS
-            "com.android.emergency",
-            "com.samsung.android.emergencysos"
+        // Minimum safety essentials (always allowed, even if user removes from DB)
+        val safetyPackages = listOf(
+            "com.example.wakt",      // Our app
+            "com.android.systemui",  // System UI
+            "com.android.settings"   // Settings
         )
 
-        return emergencyPackages.any { packageName.startsWith(it) }
+        if (safetyPackages.any { packageName.startsWith(it) }) {
+            Log.d(TAG, "isEmergencyOrEssentialApp: $packageName is in safety packages - ALLOWED")
+            return true
+        }
+
+        // Check user's essential apps from database (includes Phone, Messages, user-selected apps)
+        val isEssential = essentialAppsManager.isAppEssential(packageName)
+        Log.d(TAG, "isEmergencyOrEssentialApp: $packageName isEssential from DB = $isEssential")
+        return isEssential
     }
 
     private fun stopEnforcement() {

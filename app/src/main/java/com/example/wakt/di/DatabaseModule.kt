@@ -38,7 +38,7 @@ object DatabaseModule {
             WaktDatabase::class.java,
             "wakt_database"
         )
-        .addMigrations(MIGRATION_1_2, WaktDatabase.MIGRATION_2_3, WaktDatabase.MIGRATION_3_4, WaktDatabase.MIGRATION_4_5, WaktDatabase.MIGRATION_5_6)
+        .addMigrations(MIGRATION_1_2, WaktDatabase.MIGRATION_2_3, WaktDatabase.MIGRATION_3_4, WaktDatabase.MIGRATION_4_5, WaktDatabase.MIGRATION_5_6, WaktDatabase.MIGRATION_6_7)
         .fallbackToDestructiveMigration() // For development, remove in production
         .build()
     }
