@@ -1109,8 +1109,11 @@ class AppBlockingService : AccessibilityService() {
      */
     private fun blockNonEssentialAppWithNotification(packageName: String) {
         Log.d(TAG, "BLOCKING non-essential app during brick session: $packageName")
-        
+
         try {
+            // Show overlay immediately
+            BrickOverlayService.start(this)
+
             // Get app name for notification
             val appName = try {
                 val appInfo = packageManager.getApplicationInfo(packageName, 0)
