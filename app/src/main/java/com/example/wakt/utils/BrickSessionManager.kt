@@ -238,10 +238,11 @@ class BrickSessionManager @Inject constructor(
                     Log.d(TAG, "Schedule '${session.name}' (${session.startHour}:${session.startMinute} - ${session.endHour}:${session.endMinute}): " +
                         "current=$currentHour:$currentMinute, inWindow=$isInWindow")
 
-                    // SAFETY: DO NOT auto-start sessions! This was causing the dangerous auto-lock bug.
-                    // Sessions should only start with explicit user action.
-                    // If we need to notify the user about a schedule, we should show a notification
-                    // that they can tap to start the session manually.
+                    // Auto-start scheduled sessions when in time window
+                    if (isInWindow && session.isActive) {
+                        Log.i(TAG, "Starting scheduled session: ${session.name}")
+                        startScheduledSession(session)
+                    }
                 }
             }
 
@@ -336,13 +337,21 @@ class BrickSessionManager @Inject constructor(
                 currentSessionEndTime = endTime
             )
             currentSessionLog = sessionLog.copy(id = logId)
-            
-            // Launch brick screen
-            launchBrickScreen()
-            
-            // Start monitoring
+
+            // Start monitoring and enforcement services
             startSessionMonitoring()
-            
+            startEnforcementServices()
+
+            // Show lock screen immediately
+            com.example.wakt.services.BrickOverlayService.requestShowOverlay(context)
+
+            // Navigate to home so the overlay is visible
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(homeIntent)
+
             Log.i(TAG, "Started scheduled session: ${session.name}")
             
         } catch (e: Exception) {

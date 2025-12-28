@@ -1,6 +1,18 @@
-# Wakt
+<p align="center">
+  <img src="logo-app.png" alt="Wakt Logo" width="128" height="128">
+</p>
 
-Wakt is a distraction blocker for Android. It helps you stay focused by blocking apps and websites and adding intentional friction (wait timers or challenges) before you can access them.
+<h1 align="center">Wakt</h1>
+
+<p align="center">
+  <strong>Digital wellness app for Android that helps you stay focused</strong>
+</p>
+
+<p align="center">
+  Block distracting apps and websites with intentional friction - wait timers, challenges, and scheduled lock sessions.
+</p>
+
+---
 
 ## What it does
 

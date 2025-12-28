@@ -39,7 +39,8 @@ class ScheduleViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
 
-            phoneBrickSessionDao.getAllActiveSessions().collect { sessions ->
+            // Use getAllSessions() to include inactive schedules (so user can toggle them back on)
+            phoneBrickSessionDao.getAllSessions().collect { sessions ->
                 // Filter for SLEEP_SCHEDULE type (time-window based schedules)
                 val schedules = sessions.filter { it.sessionType == BrickSessionType.SLEEP_SCHEDULE }
 

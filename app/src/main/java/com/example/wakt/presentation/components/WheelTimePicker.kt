@@ -38,8 +38,8 @@ fun WheelTimePicker(
         verticalAlignment = Alignment.CenterVertically
     ) {
         // Hours wheel (0-23)
-        LoopingWheelPicker(
-            itemCount = 24,
+        SimpleWheelPicker(
+            items = (0..23).toList(),
             selectedItem = hours,
             onItemSelected = onHoursChange,
             itemHeight = itemHeight,
@@ -62,8 +62,8 @@ fun WheelTimePicker(
         }
 
         // Minutes wheel (0-59)
-        LoopingWheelPicker(
-            itemCount = 60,
+        SimpleWheelPicker(
+            items = (0..59).toList(),
             selectedItem = minutes,
             onItemSelected = onMinutesChange,
             itemHeight = itemHeight,
@@ -74,8 +74,8 @@ fun WheelTimePicker(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LoopingWheelPicker(
-    itemCount: Int,
+private fun SimpleWheelPicker(
+    items: List<Int>,
     selectedItem: Int,
     onItemSelected: (Int) -> Unit,
     itemHeight: Dp,
@@ -84,43 +84,34 @@ private fun LoopingWheelPicker(
     val density = LocalDensity.current
     val itemHeightPx = with(density) { itemHeight.toPx() }
 
-    // Create repeated items for infinite scroll illusion (reduced for performance)
-    val repeatCount = 100
-    val totalItems = itemCount * repeatCount
-    val middleSection = repeatCount / 2
-    val initialIndex = (middleSection * itemCount) + selectedItem
+    // Simple finite list - no infinite scroll overhead
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedItem)
 
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
-
-    // Scroll to correct position when selectedItem changes externally (e.g., loading saved data)
+    // Scroll to correct position when selectedItem changes externally
     LaunchedEffect(selectedItem) {
         val currentCenteredIndex = listState.firstVisibleItemIndex +
             if (listState.firstVisibleItemScrollOffset > itemHeightPx * 0.5f) 1 else 0
-        val currentValue = currentCenteredIndex % itemCount
 
-        // Only scroll if the current position doesn't match the selected item
-        if (currentValue != selectedItem) {
-            val targetIndex = (middleSection * itemCount) + selectedItem
-            listState.scrollToItem(targetIndex)
+        if (currentCenteredIndex != selectedItem) {
+            listState.scrollToItem(selectedItem)
         }
     }
 
-    // Handle scroll end - notify selection change (only when scroll stops)
+    // Handle scroll end - notify selection change
     LaunchedEffect(listState.isScrollInProgress) {
         if (!listState.isScrollInProgress) {
             val firstVisible = listState.firstVisibleItemIndex
             val offset = listState.firstVisibleItemScrollOffset
             val centeredIndex = if (offset > itemHeightPx * 0.5f) firstVisible + 1 else firstVisible
-            val actualValue = centeredIndex % itemCount
-            if (actualValue != selectedItem) {
-                onItemSelected(actualValue)
+            val clampedIndex = centeredIndex.coerceIn(0, items.lastIndex)
+            if (clampedIndex != selectedItem) {
+                onItemSelected(clampedIndex)
             }
         }
     }
 
-    // Get colors outside of items to avoid repeated lookups
+    // Cache colors
     val primaryColor = MaterialTheme.colorScheme.primary
-    val secondaryColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     Box(
         modifier = modifier.height(itemHeight * 3),
@@ -133,17 +124,16 @@ private fun LoopingWheelPicker(
             flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
         ) {
             items(
-                count = totalItems,
+                count = items.size,
                 key = { it }
             ) { index ->
                 WheelPickerItem(
+                    value = items[index],
                     index = index,
-                    itemCount = itemCount,
                     itemHeightPx = itemHeightPx,
                     itemHeight = itemHeight,
                     listState = listState,
-                    primaryColor = primaryColor,
-                    secondaryColor = secondaryColor
+                    primaryColor = primaryColor
                 )
             }
         }
@@ -155,16 +145,13 @@ private fun LoopingWheelPicker(
  */
 @Composable
 private fun WheelPickerItem(
+    value: Int,
     index: Int,
-    itemCount: Int,
     itemHeightPx: Float,
     itemHeight: Dp,
     listState: LazyListState,
-    primaryColor: androidx.compose.ui.graphics.Color,
-    secondaryColor: androidx.compose.ui.graphics.Color
+    primaryColor: androidx.compose.ui.graphics.Color
 ) {
-    val actualValue = index % itemCount
-
     Box(
         modifier = Modifier
             .height(itemHeight)
@@ -190,9 +177,8 @@ private fun WheelPickerItem(
             },
         contentAlignment = Alignment.Center
     ) {
-        // Use fixed text style - color changes handled separately
         Text(
-            text = String.format("%02d", actualValue),
+            text = String.format("%02d", value),
             fontSize = 52.sp,
             fontWeight = FontWeight.Bold,
             color = primaryColor

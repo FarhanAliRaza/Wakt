@@ -10,9 +10,13 @@ interface PhoneBrickSessionDao {
     
     @Query("SELECT * FROM phone_brick_sessions WHERE isActive = 1 ORDER BY createdAt DESC")
     fun getAllActiveSessions(): Flow<List<PhoneBrickSession>>
-    
+
     @Query("SELECT * FROM phone_brick_sessions WHERE isActive = 1 ORDER BY createdAt DESC")
     suspend fun getAllActiveSessionsList(): List<PhoneBrickSession>
+
+    // Get ALL sessions (including inactive) - for schedule list UI where user can toggle on/off
+    @Query("SELECT * FROM phone_brick_sessions ORDER BY createdAt DESC")
+    fun getAllSessions(): Flow<List<PhoneBrickSession>>
     
     @Query("SELECT * FROM phone_brick_sessions WHERE id = :id")
     suspend fun getSessionById(id: Long): PhoneBrickSession?
