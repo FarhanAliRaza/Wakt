@@ -14,6 +14,10 @@
 
 ---
 
+## Download
+
+Get the latest APK from [Releases](../../releases).
+
 ## Features
 
 - **App Blocking** - Block any installed app with challenges
