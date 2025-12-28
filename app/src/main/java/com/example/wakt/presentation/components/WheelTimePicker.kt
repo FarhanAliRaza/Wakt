@@ -4,13 +4,14 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -83,13 +84,26 @@ private fun LoopingWheelPicker(
     val density = LocalDensity.current
     val itemHeightPx = with(density) { itemHeight.toPx() }
 
-    // Create a large number of repeated items for infinite scroll illusion
-    val repeatCount = 1000
+    // Create repeated items for infinite scroll illusion (reduced for performance)
+    val repeatCount = 100
     val totalItems = itemCount * repeatCount
     val middleSection = repeatCount / 2
     val initialIndex = (middleSection * itemCount) + selectedItem
 
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+
+    // Scroll to correct position when selectedItem changes externally (e.g., loading saved data)
+    LaunchedEffect(selectedItem) {
+        val currentCenteredIndex = listState.firstVisibleItemIndex +
+            if (listState.firstVisibleItemScrollOffset > itemHeightPx * 0.5f) 1 else 0
+        val currentValue = currentCenteredIndex % itemCount
+
+        // Only scroll if the current position doesn't match the selected item
+        if (currentValue != selectedItem) {
+            val targetIndex = (middleSection * itemCount) + selectedItem
+            listState.scrollToItem(targetIndex)
+        }
+    }
 
     // Handle scroll end - notify selection change (only when scroll stops)
     LaunchedEffect(listState.isScrollInProgress) {
@@ -103,6 +117,10 @@ private fun LoopingWheelPicker(
             }
         }
     }
+
+    // Get colors outside of items to avoid repeated lookups
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val secondaryColor = MaterialTheme.colorScheme.onSurfaceVariant
 
     Box(
         modifier = modifier.height(itemHeight * 3),
@@ -118,48 +136,66 @@ private fun LoopingWheelPicker(
                 count = totalItems,
                 key = { it }
             ) { index ->
-                val actualValue = index % itemCount
-
-                // Calculate distance from center using derivedStateOf to minimize recomposition
-                val distanceFromCenter by remember {
-                    derivedStateOf {
-                        val firstVisible = listState.firstVisibleItemIndex
-                        val offset = listState.firstVisibleItemScrollOffset
-                        val centeredIndex = if (offset > itemHeightPx * 0.5f) firstVisible + 1 else firstVisible
-                        abs(index - centeredIndex)
-                    }
-                }
-
-                val alpha = when {
-                    distanceFromCenter == 0 -> 1f
-                    distanceFromCenter == 1 -> 0.4f
-                    else -> 0.15f
-                }
-
-                val scale = when {
-                    distanceFromCenter == 0 -> 1f
-                    distanceFromCenter == 1 -> 0.8f
-                    else -> 0.65f
-                }
-
-                Box(
-                    modifier = Modifier
-                        .height(itemHeight)
-                        .fillMaxWidth()
-                        .alpha(alpha),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = String.format("%02d", actualValue),
-                        fontSize = (52 * scale).sp,
-                        fontWeight = if (distanceFromCenter == 0) FontWeight.Bold else FontWeight.Normal,
-                        color = if (distanceFromCenter == 0)
-                            MaterialTheme.colorScheme.primary
-                        else
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                WheelPickerItem(
+                    index = index,
+                    itemCount = itemCount,
+                    itemHeightPx = itemHeightPx,
+                    itemHeight = itemHeight,
+                    listState = listState,
+                    primaryColor = primaryColor,
+                    secondaryColor = secondaryColor
+                )
             }
         }
+    }
+}
+
+/**
+ * Individual wheel picker item - uses graphicsLayer for alpha/scale to avoid recomposition during scroll
+ */
+@Composable
+private fun WheelPickerItem(
+    index: Int,
+    itemCount: Int,
+    itemHeightPx: Float,
+    itemHeight: Dp,
+    listState: LazyListState,
+    primaryColor: androidx.compose.ui.graphics.Color,
+    secondaryColor: androidx.compose.ui.graphics.Color
+) {
+    val actualValue = index % itemCount
+
+    Box(
+        modifier = Modifier
+            .height(itemHeight)
+            .fillMaxWidth()
+            .graphicsLayer {
+                // Calculate distance from center in the draw phase - no recomposition!
+                val firstVisible = listState.firstVisibleItemIndex
+                val offset = listState.firstVisibleItemScrollOffset
+                val centeredIndex = if (offset > itemHeightPx * 0.5f) firstVisible + 1 else firstVisible
+                val distance = abs(index - centeredIndex)
+
+                alpha = when (distance) {
+                    0 -> 1f
+                    1 -> 0.5f
+                    else -> 0.2f
+                }
+                scaleX = when (distance) {
+                    0 -> 1f
+                    1 -> 0.85f
+                    else -> 0.7f
+                }
+                scaleY = scaleX
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        // Use fixed text style - color changes handled separately
+        Text(
+            text = String.format("%02d", actualValue),
+            fontSize = 52.sp,
+            fontWeight = FontWeight.Bold,
+            color = primaryColor
+        )
     }
 }

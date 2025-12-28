@@ -9,6 +9,7 @@ import com.example.wakt.data.database.entity.BlockedItem
 import com.example.wakt.data.database.entity.BrickSessionType
 import com.example.wakt.data.database.entity.PhoneBrickSession
 import com.example.wakt.utils.BrickSessionManager
+import com.example.wakt.utils.PermissionHelper
 import com.example.wakt.utils.ServiceOptimizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -115,6 +116,13 @@ class LockViewModel @Inject constructor(
     fun startLockSession() {
         viewModelScope.launch {
             try {
+                // Check permissions first
+                if (!PermissionHelper.areAllPermissionsGranted(context)) {
+                    val missing = PermissionHelper.getMissingPermissions(context)
+                    _uiState.update { it.copy(error = "Missing permissions: ${missing.joinToString(", ")}. Please grant all permissions first.") }
+                    return@launch
+                }
+
                 val state = _uiState.value
                 val totalMinutes = (state.selectedHours * 60) + state.selectedMinutes
 
@@ -155,6 +163,13 @@ class LockViewModel @Inject constructor(
     fun startTryLockSession(durationSeconds: Int) {
         viewModelScope.launch {
             try {
+                // Check permissions first
+                if (!PermissionHelper.areAllPermissionsGranted(context)) {
+                    val missing = PermissionHelper.getMissingPermissions(context)
+                    _uiState.update { it.copy(error = "Missing permissions: ${missing.joinToString(", ")}. Please grant all permissions first.") }
+                    return@launch
+                }
+
                 // Convert seconds to minutes (minimum 1 minute for the session)
                 // But we store actual seconds in a way that session manager can handle
                 val durationMinutes = maxOf(1, (durationSeconds + 59) / 60)

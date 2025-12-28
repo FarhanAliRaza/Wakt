@@ -11,7 +11,9 @@ import com.example.wakt.data.database.entity.PhoneBrickSession
 import com.example.wakt.data.database.entity.ScheduleTargetType
 import com.example.wakt.presentation.components.daysSetToString
 import com.example.wakt.presentation.components.stringToDaysSet
+import com.example.wakt.utils.PermissionHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,7 +51,8 @@ data class ScheduleDetailUiState(
 @HiltViewModel
 class ScheduleDetailViewModel @Inject constructor(
     private val phoneBrickSessionDao: PhoneBrickSessionDao,
-    savedStateHandle: SavedStateHandle
+    savedStateHandle: SavedStateHandle,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ScheduleDetailUiState())
@@ -95,8 +98,8 @@ class ScheduleDetailViewModel @Inject constructor(
 
                         ScheduleAppInfo(
                             name = packageManager.getApplicationLabel(appInfo).toString(),
-                            packageName = packageName,
-                            icon = packageManager.getApplicationIcon(appInfo)
+                            packageName = packageName
+                            // Note: icon loading removed for performance - not displayed in UI
                         )
                     } catch (e: Exception) {
                         null
@@ -197,6 +200,13 @@ class ScheduleDetailViewModel @Inject constructor(
         viewModelScope.launch {
             val state = _uiState.value
 
+            // Check permissions first
+            if (!PermissionHelper.areAllPermissionsGranted(context)) {
+                val missing = PermissionHelper.getMissingPermissions(context)
+                _uiState.update { it.copy(error = "Missing permissions: ${missing.joinToString(", ")}. Please grant all permissions before creating schedules.") }
+                return@launch
+            }
+
             if (state.repeatDays.isEmpty()) {
                 _uiState.update { it.copy(error = "Please select at least one day") }
                 return@launch
@@ -204,6 +214,26 @@ class ScheduleDetailViewModel @Inject constructor(
 
             if (state.scheduleTargetType == ScheduleTargetType.APPS && state.selectedPackages.isEmpty()) {
                 _uiState.update { it.copy(error = "Please select at least one app to block") }
+                return@launch
+            }
+
+            // Validate schedule duration (minimum 5 minutes)
+            val startMinutes = state.startHour * 60 + state.startMinute
+            val endMinutes = state.endHour * 60 + state.endMinute
+            val durationMinutes = if (endMinutes > startMinutes) {
+                endMinutes - startMinutes
+            } else {
+                // Overnight schedule (e.g., 22:00 - 06:00)
+                (24 * 60 - startMinutes) + endMinutes
+            }
+
+            if (durationMinutes < 5) {
+                _uiState.update { it.copy(error = "Schedule must be at least 5 minutes long") }
+                return@launch
+            }
+
+            if (state.startHour == state.endHour && state.startMinute == state.endMinute) {
+                _uiState.update { it.copy(error = "Start and end time cannot be the same") }
                 return@launch
             }
 

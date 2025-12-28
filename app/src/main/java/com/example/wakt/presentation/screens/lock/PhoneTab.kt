@@ -34,6 +34,17 @@ fun PhoneTab(
 
     var showPermissionDialog by remember { mutableStateOf(false) }
     var showConfirmDialog by remember { mutableStateOf(false) }
+    var showErrorDialog by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf("") }
+
+    // Watch for errors from ViewModel
+    LaunchedEffect(uiState.error) {
+        uiState.error?.let {
+            errorMessage = it
+            showErrorDialog = true
+            viewModel.clearError()
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -218,6 +229,44 @@ fun PhoneTab(
             dismissButton = {
                 TextButton(onClick = { showPermissionDialog = false }) {
                     Text("Cancel")
+                }
+            }
+        )
+    }
+
+    // Error dialog
+    if (showErrorDialog) {
+        AlertDialog(
+            onDismissRequest = { showErrorDialog = false },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface,
+            icon = {
+                Icon(
+                    imageVector = Icons.Default.Warning,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error
+                )
+            },
+            title = {
+                Text(
+                    text = "Cannot Start Lock",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = errorMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = { showErrorDialog = false },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("OK")
                 }
             }
         )

@@ -1,5 +1,6 @@
 package com.example.wakt.presentation.screens.phonebrick.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.wakt.data.database.dao.PhoneBrickSessionDao
@@ -10,7 +11,9 @@ import com.example.wakt.presentation.screens.phonebrick.SessionConfig
 import com.example.wakt.utils.BrickSessionManager
 import com.example.wakt.utils.EssentialAppsManager
 import com.example.wakt.utils.GlobalSettingsManager
+import com.example.wakt.utils.PermissionHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
@@ -22,7 +25,8 @@ class PhoneBrickViewModel @Inject constructor(
     private val phoneBrickSessionDao: PhoneBrickSessionDao,
     private val brickSessionManager: BrickSessionManager,
     private val essentialAppsManager: EssentialAppsManager,
-    private val globalSettingsManager: GlobalSettingsManager
+    private val globalSettingsManager: GlobalSettingsManager,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PhoneBrickUiState())
@@ -131,6 +135,15 @@ class PhoneBrickViewModel @Inject constructor(
     fun startSession(sessionId: Long) {
         viewModelScope.launch {
             try {
+                // Check permissions first
+                if (!PermissionHelper.areAllPermissionsGranted(context)) {
+                    val missing = PermissionHelper.getMissingPermissions(context)
+                    _uiState.value = _uiState.value.copy(
+                        error = "Missing permissions: ${missing.joinToString(", ")}. Please grant all permissions first."
+                    )
+                    return@launch
+                }
+
                 val success = brickSessionManager.startDurationSession(sessionId)
                 if (!success) {
                     _uiState.value = _uiState.value.copy(
@@ -144,10 +157,19 @@ class PhoneBrickViewModel @Inject constructor(
             }
         }
     }
-    
+
     fun startQuickFocusSession(durationMinutes: Int) {
         viewModelScope.launch {
             try {
+                // Check permissions first
+                if (!PermissionHelper.areAllPermissionsGranted(context)) {
+                    val missing = PermissionHelper.getMissingPermissions(context)
+                    _uiState.value = _uiState.value.copy(
+                        error = "Missing permissions: ${missing.joinToString(", ")}. Please grant all permissions first."
+                    )
+                    return@launch
+                }
+
                 // Create a temporary focus session
                 val session = PhoneBrickSession(
                     name = "Quick Focus ($durationMinutes min)",
@@ -156,7 +178,7 @@ class PhoneBrickViewModel @Inject constructor(
                     isActive = true
                     // allowEmergencyOverride is always true by default for safety
                 )
-                
+
                 val sessionId = phoneBrickSessionDao.insertSession(session)
                 brickSessionManager.startDurationSession(sessionId)
                 
