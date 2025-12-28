@@ -200,6 +200,20 @@ class BrickEnforcementService : Service() {
                     }
 
                     lastCheckedApp = foregroundApp
+
+                    // Check if this is an app being launched from overlay (in grace period)
+                    if (BrickOverlayService.isPendingLaunch(foregroundApp)) {
+                        Log.d(TAG, "✓ Pending launch app: $foregroundApp - allowing")
+                        lastAllowedAppTime = currentTime
+                        if (lastAllowedState != true) {
+                            lastAllowedState = true
+                            BrickOverlayService.hideOverlay()
+                        }
+                        delay(ENFORCEMENT_INTERVAL_MS)
+                        notificationUpdateCounter++
+                        continue
+                    }
+
                     val isAppAllowed = isEmergencyOrEssentialApp(foregroundApp) ||
                             brickSessionManager.isAppAllowedInCurrentSession(foregroundApp)
 
@@ -208,16 +222,19 @@ class BrickEnforcementService : Service() {
                         lastAllowedAppTime = currentTime
                     }
 
-                    // Only update overlay if state changed
-                    if (isAppAllowed != lastAllowedState) {
-                        lastAllowedState = isAppAllowed
-                        if (isAppAllowed) {
-                            Log.d(TAG, "✓ Allowed: $foregroundApp - hiding overlay")
-                            BrickOverlayService.hideOverlay()
-                        } else {
-                            Log.d(TAG, "✗ Blocked: $foregroundApp - showing overlay")
-                            BrickOverlayService.start(this@BrickEnforcementService)
-                        }
+                    // Only show overlay when blocked app detected
+                    // NEVER hide overlay from here - overlay is hidden only by:
+                    // 1. User launching allowed app FROM the overlay
+                    // 2. Session ending
+                    // 3. Emergency override
+                    if (!isAppAllowed && lastAllowedState != false) {
+                        lastAllowedState = false
+                        Log.d(TAG, "✗ Blocked: $foregroundApp - requesting overlay")
+                        BrickOverlayService.requestShowOverlay(this@BrickEnforcementService)
+                    } else if (isAppAllowed) {
+                        lastAllowedState = true
+                        Log.d(TAG, "✓ Allowed: $foregroundApp (overlay state unchanged)")
+                        // DO NOT hide overlay here - only the overlay itself can hide
                     }
 
                     // Update notification every 20 iterations (30 seconds)
@@ -309,9 +326,15 @@ class BrickEnforcementService : Service() {
     private suspend fun isEmergencyOrEssentialApp(packageName: String?): Boolean {
         if (packageName.isNullOrBlank()) return false
 
+        // Always allow our own app
+        if (packageName == applicationContext.packageName) return true
+
         // System essentials - always allowed (for navigation/emergency)
         val safetyPackages = listOf("com.android.systemui", "com.android.settings")
         if (safetyPackages.any { packageName.startsWith(it) }) return true
+
+        // Allow keyboards/input methods - they appear when typing in allowed apps
+        if (packageName.contains("inputmethod") || packageName.contains("keyboard")) return true
 
         // Check user's essential apps from database
         return essentialAppsManager.isAppEssential(packageName)

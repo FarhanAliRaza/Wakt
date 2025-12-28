@@ -39,6 +39,9 @@ class BrickOverlayService : Service() {
     @Inject
     lateinit var essentialAppsManager: EssentialAppsManager
 
+    @Inject
+    lateinit var globalSettingsManager: com.example.wakt.utils.GlobalSettingsManager
+
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var windowManager: WindowManager? = null
     private var overlayView: FrameLayout? = null
@@ -50,16 +53,99 @@ class BrickOverlayService : Service() {
     private var endTimeTextView: TextView? = null
     private var totalSessionSeconds: Int = 0
 
+    // Emergency override mode - show click challenge inline
+    private var isEmergencyMode = false
+    private var emergencyClicksRemaining = 0  // Will be set from global settings
+    private var emergencyClicksTextView: TextView? = null
+
     companion object {
         private const val TAG = "BrickOverlayService"
         private const val NOTIFICATION_ID = 2002
         private const val CHANNEL_ID = "brick_overlay_channel"
+        private const val LAUNCH_TIMEOUT_MS = 3000L
+        private const val POST_LAUNCH_GRACE_MS = 2000L // Grace period after app detected
 
         // Singleton reference for external access to temporarily hide/show overlay
         private var instance: BrickOverlayService? = null
 
-        // Flag to suspend overlay during emergency activities
-        private var isEmergencySuspended = false
+
+        // Track pending app launch - don't block until app opens or times out
+        @Volatile
+        var pendingLaunchPackage: String? = null
+        private var pendingLaunchTime: Long = 0L
+
+        // Track when app was confirmed in foreground - grace period to prevent launcher flash
+        @Volatile
+        private var launchConfirmedTime: Long = 0L
+        @Volatile
+        private var confirmedLaunchPackage: String? = null
+
+        // SINGLE SOURCE OF TRUTH: Should overlay be showing?
+        // Only modified by: session start, allowed app launch, session end, emergency override
+        @Volatile
+        var shouldOverlayBeShowing: Boolean = false
+            private set
+
+        /**
+         * Request to show overlay - called when session starts or blocked app detected
+         */
+        fun requestShowOverlay(context: Context) {
+            shouldOverlayBeShowing = true
+            start(context)
+            Log.d(TAG, "Overlay requested to show (shouldOverlayBeShowing=true)")
+        }
+
+        /**
+         * Request to hide overlay - called ONLY when user launches allowed app from overlay
+         */
+        fun requestHideForAllowedApp() {
+            shouldOverlayBeShowing = false
+            instance?.hideOverlayInternal()
+            Log.d(TAG, "Overlay hidden for allowed app launch (shouldOverlayBeShowing=false)")
+        }
+
+        /**
+         * Request to hide overlay - called when session ends
+         */
+        fun requestHideForSessionEnd() {
+            shouldOverlayBeShowing = false
+            instance?.hideOverlayInternal()
+            Log.d(TAG, "Overlay hidden for session end (shouldOverlayBeShowing=false)")
+        }
+
+        /**
+         * Check if overlay should currently be visible
+         */
+        fun shouldBeShowing(): Boolean = shouldOverlayBeShowing
+
+        fun isPendingLaunch(packageName: String?): Boolean {
+            if (packageName == null) return false
+
+            val now = System.currentTimeMillis()
+
+            // Check if still waiting for app to launch
+            if (pendingLaunchPackage != null && packageName == pendingLaunchPackage) {
+                if (now - pendingLaunchTime < LAUNCH_TIMEOUT_MS) {
+                    return true
+                }
+            }
+
+            // Check if within grace period after app was confirmed
+            // Only allow the SPECIFIC app that was launched, not any app
+            if (confirmedLaunchPackage != null &&
+                packageName == confirmedLaunchPackage &&
+                now - launchConfirmedTime < POST_LAUNCH_GRACE_MS) {
+                Log.d(TAG, "Within post-launch grace period - allowing $packageName")
+                return true
+            }
+
+            return false
+        }
+
+        fun clearPendingLaunch() {
+            pendingLaunchPackage = null
+            // Don't clear confirmed launch - let it expire naturally
+        }
 
         fun start(context: Context) {
             val intent = Intent(context, BrickOverlayService::class.java)
@@ -84,29 +170,28 @@ class BrickOverlayService : Service() {
             Log.d(TAG, "BrickOverlayService stopped")
         }
 
+        /**
+         * @deprecated Use requestHideForAllowedApp() or requestHideForSessionEnd() instead
+         */
         fun hideOverlay() {
+            Log.w(TAG, "hideOverlay() called directly - use requestHideForAllowedApp() or requestHideForSessionEnd() instead")
+            // Don't hide if we're supposed to be showing
+            if (shouldOverlayBeShowing) {
+                Log.d(TAG, "Ignoring hideOverlay() - shouldOverlayBeShowing is true")
+                return
+            }
             instance?.hideOverlay()
-            Log.d(TAG, "Overlay hidden by enforcement service")
         }
 
+        /**
+         * @deprecated Use requestShowOverlay() instead
+         */
         fun showOverlay() {
+            Log.w(TAG, "showOverlay() called directly - use requestShowOverlay() instead")
+            shouldOverlayBeShowing = true
             instance?.showOverlay()
-            Log.d(TAG, "Overlay shown by enforcement service")
         }
 
-        fun suspendForEmergency() {
-            isEmergencySuspended = true
-            instance?.hideOverlay()
-            Log.d(TAG, "Overlay suspended for emergency activity")
-        }
-
-        fun resumeAfterEmergency() {
-            isEmergencySuspended = false
-            instance?.showOverlay()
-            Log.d(TAG, "Overlay resumed after emergency activity")
-        }
-
-        fun isEmergencySuspended(): Boolean = isEmergencySuspended
     }
 
     override fun onCreate() {
@@ -206,11 +291,6 @@ class BrickOverlayService : Service() {
             return
         }
 
-        // Don't show overlay if suspended for emergency activities
-        if (isEmergencySuspended) {
-            Log.d(TAG, "Overlay suspended for emergency activity - not showing")
-            return
-        }
 
         // Check if overlay permission is granted
         if (!Settings.canDrawOverlays(this)) {
@@ -526,7 +606,7 @@ class BrickOverlayService : Service() {
     }
 
     /**
-     * Load essential apps - always shows Phone and Messages (via intents), plus user-added apps
+     * Load essential apps - always shows Phone and Messages (via intents), plus user-configured apps
      */
     private fun loadAndDisplayEssentialAppsNew(container: LinearLayout) {
         serviceScope.launch {
@@ -554,11 +634,19 @@ class BrickOverlayService : Service() {
                     }
                 )
 
-                // Add user-added essential apps (up to 3 more)
+                // Add default allowed apps from Settings (GlobalSettingsManager)
+                val defaultAllowedApps = globalSettingsManager.getDefaultAllowedApps()
+                for (packageName in defaultAllowedApps) {
+                    if (!displayedPackages.contains(packageName)) {
+                        tryAddAppIcon(container, packageName, displayedPackages)
+                    }
+                }
+
+                // Add user-added essential apps from database
                 val essentialApps = essentialAppsManager.getAllEssentialApps().firstOrNull() ?: emptyList()
                 val userApps = essentialApps.filter { it.isUserAdded }
 
-                for (app in userApps.take(3)) {
+                for (app in userApps) {
                     if (!displayedPackages.contains(app.packageName)) {
                         tryAddAppIcon(container, app.packageName, displayedPackages)
                     }
@@ -612,23 +700,42 @@ class BrickOverlayService : Service() {
     }
 
     /**
-     * Launch an intent (for Phone/Messages)
+     * Launch an intent (for Phone/Messages) - keeps overlay visible until app opens
      */
     private fun launchIntent(intent: Intent, label: String) {
         try {
-            // Hide overlay immediately to let app come to foreground
-            hideOverlay()
-            Log.d(TAG, "Hidden overlay to launch: $label")
+            // Determine target package for monitoring
+            val targetPackage = when (label) {
+                "Phone" -> essentialAppsManager.getDefaultDialerPackage()
+                "Messages" -> essentialAppsManager.getDefaultSmsPackage()
+                else -> null
+            }
+
+            // Mark pending launch - don't hide overlay yet
+            pendingLaunchPackage = targetPackage
+            pendingLaunchTime = System.currentTimeMillis()
 
             startActivity(intent)
-            Log.d(TAG, "Launched: $label")
+            Log.d(TAG, "Launched: $label (target: $targetPackage) - waiting for foreground")
 
             // Log access
             serviceScope.launch {
                 brickSessionManager.logEssentialAppAccess(label)
             }
+
+            // Start monitoring for app to appear
+            if (targetPackage != null) {
+                startPendingLaunchMonitor(targetPackage)
+            } else {
+                // No target package known, hide after short delay
+                serviceScope.launch {
+                    delay(500)
+                    requestHideForAllowedApp()
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error launching $label", e)
+            pendingLaunchPackage = null
         }
     }
 
@@ -735,10 +842,9 @@ class BrickOverlayService : Service() {
                     // Check every 500ms if brick session is still active
                     if (!brickSessionManager.isPhoneBricked()) {
                         Log.d(TAG, "CRITICAL: Brick session ended - hiding overlay immediately")
-                        // Session ended - hide overlay no matter what (even if suspended)
-                        hideOverlay()
-                        // Clear suspension flag when session ends
-                        isEmergencySuspended = false
+                        // Session ended - update state and hide overlay
+                        shouldOverlayBeShowing = false
+                        hideOverlayInternal()
                         // Stop the service
                         stopSelf()
                         break
@@ -752,7 +858,11 @@ class BrickOverlayService : Service() {
         }
     }
 
-    private fun hideOverlay() {
+    /**
+     * Internal method to actually hide the overlay view
+     * Should only be called by proper state management methods
+     */
+    private fun hideOverlayInternal() {
         try {
             if (overlayView != null && windowManager != null) {
                 windowManager?.removeView(overlayView)
@@ -760,11 +870,19 @@ class BrickOverlayService : Service() {
                 isOverlayShowing = false
                 updateJob?.cancel()
                 sessionMonitorJob?.cancel()
-                Log.d(TAG, "Overlay hidden")
+                Log.d(TAG, "Overlay view removed (isOverlayShowing=false)")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error hiding overlay", e)
         }
+    }
+
+    /**
+     * Hide overlay - wrapper that calls internal method
+     * Used by companion object methods
+     */
+    private fun hideOverlay() {
+        hideOverlayInternal()
     }
 
     private fun launchApp(packageName: String) {
@@ -773,33 +891,265 @@ class BrickOverlayService : Service() {
             if (intent != null) {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
 
-                // Hide overlay immediately to let app come to foreground
-                hideOverlay()
-                Log.d(TAG, "Hidden overlay to launch allowed app: $packageName")
+                // Mark pending launch - don't hide overlay yet
+                pendingLaunchPackage = packageName
+                pendingLaunchTime = System.currentTimeMillis()
 
                 startActivity(intent)
-                Log.d(TAG, "Launched allowed app: $packageName")
+                Log.d(TAG, "Launched allowed app: $packageName - waiting for foreground")
 
                 // Log app access
                 serviceScope.launch {
                     brickSessionManager.logEssentialAppAccess(packageName)
                 }
+
+                // Start monitoring for app to appear
+                startPendingLaunchMonitor(packageName)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error launching app $packageName", e)
+            pendingLaunchPackage = null
+        }
+    }
+
+    private var pendingLaunchJob: Job? = null
+
+    /**
+     * Monitor for target app to reach foreground, then hide overlay
+     * Maintains a grace period after detection to prevent launcher flash
+     */
+    private fun startPendingLaunchMonitor(targetPackage: String) {
+        pendingLaunchJob?.cancel()
+        pendingLaunchJob = serviceScope.launch {
+            // Poll every 100ms for up to 3 seconds
+            repeat(30) {
+                delay(100)
+
+                val foreground = AppBlockingService.getForegroundPackageReliably()
+                if (foreground == targetPackage) {
+                    // App is now in foreground - record confirmation time for grace period
+                    Log.d(TAG, "Target app $targetPackage confirmed in foreground - hiding for allowed app")
+                    confirmedLaunchPackage = targetPackage
+                    launchConfirmedTime = System.currentTimeMillis()
+                    pendingLaunchPackage = null
+
+                    // Hide overlay using proper method (updates shouldOverlayBeShowing)
+                    requestHideForAllowedApp()
+                    return@launch
+                }
+
+                // Check timeout
+                if (System.currentTimeMillis() - pendingLaunchTime > LAUNCH_TIMEOUT_MS) {
+                    Log.d(TAG, "Launch timeout for $targetPackage")
+                    pendingLaunchPackage = null
+                    return@launch
+                }
+            }
+
+            // Timeout - app didn't open
+            Log.d(TAG, "App $targetPackage never reached foreground")
+            pendingLaunchPackage = null
         }
     }
 
     private fun launchEmergencyOverride() {
-        try {
-            val intent = Intent(this, EmergencyOverrideActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        // Switch to emergency mode - show click challenge inline
+        isEmergencyMode = true
+        emergencyClicksRemaining = globalSettingsManager.getClickCount()
+        Log.d(TAG, "Entering emergency mode - $emergencyClicksRemaining clicks required")
+
+        // Rebuild the overlay to show emergency challenge
+        rebuildOverlayContent()
+    }
+
+    private fun rebuildOverlayContent() {
+        overlayView?.let { container ->
+            // Remove existing content
+            container.removeAllViews()
+
+            // Build new content based on mode
+            val contentView = if (isEmergencyMode) {
+                buildEmergencyContent()
+            } else {
+                buildOverlayContent()
             }
-            startActivity(intent)
-            Log.d(TAG, "Launched EmergencyOverrideActivity")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error launching EmergencyOverrideActivity", e)
+            container.addView(contentView)
         }
+    }
+
+    private fun buildEmergencyContent(): FrameLayout {
+        val container = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(android.graphics.Color.parseColor("#FF1A1A1A")) // Darker background for emergency
+        }
+
+        val contentLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            ).apply {
+                marginStart = dpToPx(32)
+                marginEnd = dpToPx(32)
+            }
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+
+        // Warning icon
+        val warningText = TextView(this).apply {
+            text = "⚠️"
+            textSize = 48f
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(16)
+            }
+        }
+        contentLayout.addView(warningText)
+
+        // Title
+        val titleText = TextView(this).apply {
+            text = "EMERGENCY OVERRIDE"
+            textSize = 24f
+            setTextColor(android.graphics.Color.parseColor("#EF4444")) // Red
+            gravity = Gravity.CENTER
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(8)
+            }
+        }
+        contentLayout.addView(titleText)
+
+        // Subtitle
+        val subtitleText = TextView(this).apply {
+            text = "Tap the button to end session early"
+            textSize = 14f
+            setTextColor(android.graphics.Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(32)
+            }
+        }
+        contentLayout.addView(subtitleText)
+
+        // Clicks remaining counter
+        emergencyClicksTextView = TextView(this).apply {
+            text = "$emergencyClicksRemaining"
+            textSize = 64f
+            setTextColor(android.graphics.Color.parseColor("#EF4444"))
+            gravity = Gravity.CENTER
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(8)
+            }
+        }
+        contentLayout.addView(emergencyClicksTextView)
+
+        // "taps remaining" label
+        val tapsLabel = TextView(this).apply {
+            text = "taps remaining"
+            textSize = 16f
+            setTextColor(android.graphics.Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dpToPx(32)
+            }
+        }
+        contentLayout.addView(tapsLabel)
+
+        // Big TAP button
+        val tapButton = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            val size = dpToPx(160)
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                bottomMargin = dpToPx(32)
+            }
+            val gradientDrawable = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(android.graphics.Color.parseColor("#EF4444"))
+            }
+            background = gradientDrawable
+
+            setOnClickListener {
+                onEmergencyTap()
+            }
+        }
+
+        val tapText = TextView(this).apply {
+            text = "TAP"
+            textSize = 32f
+            setTextColor(android.graphics.Color.WHITE)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+        tapButton.addView(tapText)
+        contentLayout.addView(tapButton)
+
+        // Cancel button
+        val cancelButton = TextView(this).apply {
+            text = "Cancel"
+            textSize = 16f
+            setTextColor(android.graphics.Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+            setPadding(dpToPx(24), dpToPx(12), dpToPx(24), dpToPx(12))
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+            }
+            setOnClickListener {
+                cancelEmergencyMode()
+            }
+        }
+        contentLayout.addView(cancelButton)
+
+        container.addView(contentLayout)
+        return container
+    }
+
+    private fun onEmergencyTap() {
+        emergencyClicksRemaining--
+        emergencyClicksTextView?.text = "$emergencyClicksRemaining"
+
+        if (emergencyClicksRemaining <= 0) {
+            // Emergency override complete
+            Log.d(TAG, "Emergency override complete - ending session")
+            serviceScope.launch {
+                brickSessionManager.emergencyOverride("User completed emergency challenge")
+            }
+        }
+    }
+
+    private fun cancelEmergencyMode() {
+        isEmergencyMode = false
+        emergencyClicksRemaining = 0
+        Log.d(TAG, "Emergency mode cancelled")
+        rebuildOverlayContent()
     }
 
     @android.annotation.SuppressLint("NotificationPermission")
@@ -997,11 +1347,12 @@ class BrickOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        hideOverlay()
+        hideOverlayInternal()
         updateJob?.cancel()
         sessionMonitorJob?.cancel()
         serviceScope.cancel()
         instance = null
+        shouldOverlayBeShowing = false
         Log.d(TAG, "BrickOverlayService destroyed")
     }
 }

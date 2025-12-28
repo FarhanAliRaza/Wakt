@@ -39,8 +39,8 @@ class EmergencyOverrideActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Suspend the brick overlay to prevent it from covering this activity
-        BrickOverlayService.suspendForEmergency()
+        // Hide the brick overlay while this activity is shown
+        BrickOverlayService.requestHideForAllowedApp()
 
         // Set window flags to appear above the brick overlay
         window.addFlags(
@@ -61,13 +61,11 @@ class EmergencyOverrideActivity : ComponentActivity() {
             WaktTheme {
                 EmergencyOverrideScreen(
                     onEmergencyComplete = {
-                        // Resume overlay when emergency is complete
-                        BrickOverlayService.resumeAfterEmergency()
                         finish()
                     },
                     onCancel = {
-                        // Resume overlay when user cancels
-                        BrickOverlayService.resumeAfterEmergency()
+                        // Show overlay again when user cancels
+                        BrickOverlayService.requestShowOverlay(this@EmergencyOverrideActivity)
                         finish()
                     }
                 )

@@ -1014,6 +1014,12 @@ class AppBlockingService : AccessibilityService() {
                 return
             }
 
+            // Check if this is an app we're currently trying to launch from overlay
+            if (BrickOverlayService.isPendingLaunch(packageName)) {
+                Log.d(TAG, "Allowing pending launch app: $packageName")
+                return
+            }
+
             // Allow default dialer for emergency calls (dynamic detection)
             val defaultDialer = getDefaultDialerPackage()
             if (defaultDialer != null && packageName == defaultDialer) {
@@ -1036,6 +1042,12 @@ class AppBlockingService : AccessibilityService() {
             // Allow SystemUI for essential system functions
             if (packageName == "com.android.systemui") {
                 Log.d(TAG, "Allowing SystemUI during brick session")
+                return
+            }
+
+            // Allow keyboards/input methods - they appear when typing in allowed apps
+            if (packageName.contains("inputmethod") || packageName.contains("keyboard")) {
+                Log.d(TAG, "Allowing keyboard/input method during brick session: $packageName")
                 return
             }
 
@@ -1111,8 +1123,9 @@ class AppBlockingService : AccessibilityService() {
         Log.d(TAG, "BLOCKING non-essential app during brick session: $packageName")
 
         try {
-            // Show overlay immediately
-            BrickOverlayService.start(this)
+            // Show overlay immediately - the overlay IS the block
+            // No need to press BACK or do anything else - overlay covers everything
+            BrickOverlayService.requestShowOverlay(this)
 
             // Get app name for notification
             val appName = try {
@@ -1121,13 +1134,10 @@ class AppBlockingService : AccessibilityService() {
             } catch (e: Exception) {
                 packageName
             }
-            
-            // Show notification instead of overlay
+
+            // Show notification for awareness
             showBrickModeViolationNotification(appName)
-            
-            // Close the app gently - just go back, don't force home or launcher
-            performGlobalAction(GLOBAL_ACTION_BACK)
-            
+
             // Log bypass attempt asynchronously
             serviceScope.launch {
                 brickSessionManager.logBypassAttempt()
@@ -1135,10 +1145,7 @@ class AppBlockingService : AccessibilityService() {
             
         } catch (e: Exception) {
             Log.e(TAG, "Error blocking non-essential app with notification", e)
-            // Fallback - just go back
-            try {
-                performGlobalAction(GLOBAL_ACTION_BACK)
-            } catch (ignored: Exception) {}
+            // Just log the error - overlay should handle blocking
         }
     }
     

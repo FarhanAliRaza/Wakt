@@ -22,7 +22,8 @@ class BrickSessionManager @Inject constructor(
     private val context: Context,
     private val phoneBrickSessionDao: PhoneBrickSessionDao,
     private val brickSessionLogDao: BrickSessionLogDao,
-    private val essentialAppsManager: EssentialAppsManager
+    private val essentialAppsManager: EssentialAppsManager,
+    private val globalSettingsManager: GlobalSettingsManager
 ) {
     companion object {
         private const val TAG = "BrickSessionManager"
@@ -88,12 +89,20 @@ class BrickSessionManager @Inject constructor(
                 completionStatus = SessionCompletionStatus.ONGOING
             )
 
-            // Don't launch brick screen immediately - let user stay on current screen
-            // The AccessibilityService will handle blocking when needed
-
-            // Start monitoring and enforcement services (non-blocking)
+            // Start monitoring and enforcement services
             startSessionMonitoring()
             startEnforcementServices()
+
+            // Show lock screen immediately - user expects visual feedback
+            // Use requestShowOverlay to set the state properly
+            com.example.wakt.services.BrickOverlayService.requestShowOverlay(context)
+
+            // Navigate to home so the overlay is visible
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(homeIntent)
 
             Log.i(TAG, "Started duration session: ${session.name} for ${session.durationMinutes} minutes")
             return true
@@ -149,6 +158,17 @@ class BrickSessionManager @Inject constructor(
             // Start monitoring with faster check interval for short sessions
             startTryLockSessionMonitoring()
             startEnforcementServices()
+
+            // Show lock screen immediately - user expects visual feedback
+            // Use requestShowOverlay to set the state properly
+            com.example.wakt.services.BrickOverlayService.requestShowOverlay(context)
+
+            // Navigate to home so the overlay is visible
+            val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(homeIntent)
 
             Log.i(TAG, "Started try lock session: ${session.name} for $durationSeconds seconds")
             return true
@@ -530,10 +550,16 @@ class BrickSessionManager @Inject constructor(
      */
     private fun exitBrickMode() {
         try {
-            // Stop enforcement service first
+            // Hide overlay properly (updates state)
+            com.example.wakt.services.BrickOverlayService.requestHideForSessionEnd()
+
+            // Stop enforcement service
             BrickEnforcementService.stop(context)
             Log.d(TAG, "Brick enforcement service stopped")
-            
+
+            // Stop overlay service
+            com.example.wakt.services.BrickOverlayService.stop(context)
+
             // Send user back to normal home screen
             val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
@@ -576,9 +602,16 @@ class BrickSessionManager @Inject constructor(
             return false
         }
 
-        // If no allowed apps are configured, all non-essential apps are blocked
+        // Check default allowed apps from Settings first
+        val defaultAllowedApps = globalSettingsManager.getDefaultAllowedApps()
+        if (defaultAllowedApps.contains(packageName)) {
+            Log.d(TAG, "App check for $packageName: Allowed via Settings default apps")
+            return true
+        }
+
+        // If no session-specific allowed apps are configured, check is done
         if (session.allowedApps.isEmpty()) {
-            Log.d(TAG, "App check for $packageName: No allowed apps configured")
+            Log.d(TAG, "App check for $packageName: No session-specific allowed apps configured")
             return false
         }
 
@@ -589,7 +622,7 @@ class BrickSessionManager @Inject constructor(
             .filter { it.isNotEmpty() }
 
         val isAllowed = allowedPackages.contains(packageName)
-        Log.d(TAG, "App check for $packageName: allowedApps='${session.allowedApps}' | parsedList=$allowedPackages | isAllowed=$isAllowed")
+        Log.d(TAG, "App check for $packageName: sessionAllowedApps=$allowedPackages | isAllowed=$isAllowed")
 
         return isAllowed
     }

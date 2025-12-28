@@ -24,7 +24,7 @@ import javax.inject.Inject
 data class LockUiState(
     // Phone tab state
     val selectedHours: Int = 0,
-    val selectedMinutes: Int = 30,
+    val selectedMinutes: Int = 2,
     val currentActiveSession: PhoneBrickSession? = null,
     val currentSessionRemainingMinutes: Int? = null,
     val currentSessionRemainingSeconds: Int? = null,
