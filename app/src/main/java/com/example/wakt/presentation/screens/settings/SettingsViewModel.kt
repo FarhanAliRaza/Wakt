@@ -15,6 +15,7 @@ class SettingsViewModel @Inject constructor(
     val challengeType: StateFlow<ChallengeType> = globalSettingsManager.challengeType
     val waitTimeMinutes: StateFlow<Int> = globalSettingsManager.waitTimeMinutes
     val clickCount: StateFlow<Int> = globalSettingsManager.clickCount
+    val defaultAllowedApps: StateFlow<Set<String>> = globalSettingsManager.defaultAllowedApps
 
     fun setChallengeType(type: ChallengeType) {
         globalSettingsManager.setChallengeType(type)
@@ -26,5 +27,9 @@ class SettingsViewModel @Inject constructor(
 
     fun setClickCount(count: Int) {
         globalSettingsManager.setClickCount(count)
+    }
+
+    fun setDefaultAllowedApps(apps: Set<String>) {
+        globalSettingsManager.setDefaultAllowedApps(apps)
     }
 }

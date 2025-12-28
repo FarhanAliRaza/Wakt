@@ -18,70 +18,15 @@ data class EssentialApp(
 
 /**
  * Default system essential apps that should always be available
- * Includes multiple package variants for different device manufacturers
+ * Note: Phone and Messages are handled via dynamic intent detection,
+ * so they don't need hardcoded package variants here.
  */
 object DefaultEssentialApps {
     val SYSTEM_ESSENTIALS = listOf(
-        // Phone/Dialer apps - multiple variants
-        EssentialApp(
-            appName = "Phone",
-            packageName = "com.android.dialer",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        EssentialApp(
-            appName = "Phone",
-            packageName = "com.google.android.dialer",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        EssentialApp(
-            appName = "Phone",
-            packageName = "com.samsung.android.dialer",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        EssentialApp(
-            appName = "Phone",
-            packageName = "com.android.phone",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        // Emergency SOS
+        // Emergency SOS apps
         EssentialApp(
             appName = "Emergency SOS",
             packageName = "com.android.emergency",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        EssentialApp(
-            appName = "Emergency SOS",
-            packageName = "com.samsung.android.emergencysos",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        // Messages apps - multiple variants
-        EssentialApp(
-            appName = "Messages",
-            packageName = "com.android.messaging",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        EssentialApp(
-            appName = "Messages",
-            packageName = "com.google.android.apps.messaging",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        EssentialApp(
-            appName = "Messages",
-            packageName = "com.samsung.android.messaging",
-            isSystemEssential = true,
-            isUserAdded = false
-        ),
-        EssentialApp(
-            appName = "Messages",
-            packageName = "com.android.mms",
             isSystemEssential = true,
             isUserAdded = false
         ),

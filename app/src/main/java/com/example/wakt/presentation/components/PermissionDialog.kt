@@ -86,7 +86,7 @@ fun PermissionDialog(
 
                 if (needsAccessibility) {
                     Text(
-                        text = "• Accessibility Service - Monitor app launches",
+                        text = "• Accessibility Service - Block apps & sites",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }

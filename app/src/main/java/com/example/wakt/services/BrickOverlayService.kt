@@ -526,34 +526,33 @@ class BrickOverlayService : Service() {
     }
 
     /**
-     * Load essential apps - always shows Phone and Messages, plus user-added apps
+     * Load essential apps - always shows Phone and Messages (via intents), plus user-added apps
      */
     private fun loadAndDisplayEssentialAppsNew(container: LinearLayout) {
         serviceScope.launch {
             try {
                 val displayedPackages = mutableSetOf<String>()
 
-                // Always show Phone first (try different package names)
-                val phonePackages = listOf(
-                    "com.google.android.dialer",
-                    "com.android.dialer",
-                    "com.samsung.android.dialer",
-                    "com.android.phone"
+                // Add Phone button with intent (works with any dialer)
+                addIntentButton(
+                    container = container,
+                    iconResId = android.R.drawable.sym_action_call,
+                    contentDescription = "Phone",
+                    intent = Intent(Intent.ACTION_DIAL).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
                 )
-                for (pkg in phonePackages) {
-                    if (tryAddAppIcon(container, pkg, displayedPackages)) break
-                }
 
-                // Always show Messages second
-                val messagePackages = listOf(
-                    "com.google.android.apps.messaging",
-                    "com.android.messaging",
-                    "com.samsung.android.messaging",
-                    "com.android.mms"
+                // Add Messages button with intent (works with any SMS app)
+                addIntentButton(
+                    container = container,
+                    iconResId = android.R.drawable.sym_action_email,
+                    contentDescription = "Messages",
+                    intent = Intent(Intent.ACTION_SENDTO).apply {
+                        data = android.net.Uri.parse("smsto:")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
                 )
-                for (pkg in messagePackages) {
-                    if (tryAddAppIcon(container, pkg, displayedPackages)) break
-                }
 
                 // Add user-added essential apps (up to 3 more)
                 val essentialApps = essentialAppsManager.getAllEssentialApps().firstOrNull() ?: emptyList()
@@ -565,10 +564,71 @@ class BrickOverlayService : Service() {
                     }
                 }
 
-                Log.d(TAG, "Displayed ${displayedPackages.size} essential apps")
+                Log.d(TAG, "Displayed essential apps: Phone, Messages + ${displayedPackages.size} user apps")
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading essential apps", e)
             }
+        }
+    }
+
+    /**
+     * Add a button that launches an intent with a custom icon
+     */
+    private fun addIntentButton(
+        container: LinearLayout,
+        iconResId: Int,
+        contentDescription: String,
+        intent: Intent
+    ) {
+        val appButton = FrameLayout(this@BrickOverlayService).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                dpToPx(48),
+                dpToPx(48)
+            ).apply {
+                marginStart = dpToPx(8)
+                marginEnd = dpToPx(8)
+            }
+            isClickable = true
+            isFocusable = true
+            this.contentDescription = contentDescription
+            setOnClickListener {
+                launchIntent(intent, contentDescription)
+            }
+        }
+
+        val iconView = ImageView(this@BrickOverlayService).apply {
+            setImageResource(iconResId)
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            // Tint to match theme
+            setColorFilter(0xFFF1F5F9.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+        }
+        appButton.addView(iconView)
+        container.addView(appButton)
+        Log.d(TAG, "Added intent button: $contentDescription")
+    }
+
+    /**
+     * Launch an intent (for Phone/Messages)
+     */
+    private fun launchIntent(intent: Intent, label: String) {
+        try {
+            // Hide overlay immediately to let app come to foreground
+            hideOverlay()
+            Log.d(TAG, "Hidden overlay to launch: $label")
+
+            startActivity(intent)
+            Log.d(TAG, "Launched: $label")
+
+            // Log access
+            serviceScope.launch {
+                brickSessionManager.logEssentialAppAccess(label)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error launching $label", e)
         }
     }
 

@@ -41,6 +41,7 @@ fun PhoneBrickScreen(
     viewModel: PhoneBrickViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val defaultAllowedApps by viewModel.defaultAllowedApps.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var showCreateSessionDialog by remember { mutableStateOf(false) }
@@ -170,6 +171,7 @@ fun PhoneBrickScreen(
     // Create session dialog
     if (showCreateSessionDialog) {
         CreateSessionDialog(
+            defaultAllowedApps = defaultAllowedApps,
             onDismiss = { showCreateSessionDialog = false },
             onCreateSession = { sessionType, name, config ->
                 viewModel.createSession(sessionType, name, config)

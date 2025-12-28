@@ -36,7 +36,8 @@ Wakt is an Android digital wellness app that blocks distracting apps and website
 
 **AppBlockingService** (AccessibilityService)
 - Monitors app/website launches via accessibility events
-- Detects foreground app using UsageStatsManager (primary) or accessibility fallback
+- Detects foreground app using AccessibilityService (primary) with UsageStatsManager fallback
+- Updates `lastKnownForegroundPackage` on every `TYPE_WINDOW_STATE_CHANGED` event
 - Triggers BlockingOverlayActivity when blocked app/site detected
 - Handles browser-specific tab closing (Chrome, Firefox, Edge, Samsung)
 - Rate limits: 5s cooldown for apps, 2s for websites
@@ -105,6 +106,45 @@ User starts session → BrickSessionManager.startDurationSession()
   → Non-allowed app detected → notification + performGlobalAction(BACK)
   → Session expires → completeCurrentSession() + log
 ```
+
+## Foreground App Detection
+
+Detection uses a priority-based approach for reliability:
+
+### Priority Order (in `AppBlockingService.getForegroundPackageReliably()`)
+1. **AccessibilityService `lastKnownForegroundPackage`** (REAL-TIME)
+   - Updated on every `TYPE_WINDOW_STATE_CHANGED` event
+   - Most reliable - fires immediately when user switches apps or presses home
+   - Detects launcher correctly when home button pressed
+
+2. **AccessibilityService `rootInActiveWindow`**
+   - Fallback if `lastKnownForegroundPackage` is null
+   - Direct query to accessibility service
+
+3. **UsageStatsManager** (DELAYED - last resort)
+   - Has inherent delays (data not real-time)
+   - `lastTimeUsed` doesn't update when app is CLOSED, only when OPENED
+   - Pressing home button may not update launcher timestamp
+   - Only use for fallback when AccessibilityService unavailable
+
+### Launcher Detection
+Launcher packages are explicitly tracked to detect home screen:
+```kotlin
+val launcherPackages = setOf(
+    "com.google.android.apps.nexuslauncher",  // Pixel
+    "com.sec.android.app.launcher",           // Samsung
+    "com.android.launcher3",                  // AOSP
+    "com.miui.home",                          // Xiaomi
+    "com.huawei.android.launcher",            // Huawei
+    "com.oppo.launcher",                      // Oppo
+    "com.vivo.launcher"                       // Vivo
+)
+```
+
+### Why Not UsageStatsManager First?
+- UsageStatsManager returns stale data after closing apps
+- Example: Close dialer, go to home → UsageStatsManager still shows dialer as "recent" for 5+ seconds
+- AccessibilityService detects launcher immediately via `TYPE_WINDOW_STATE_CHANGED`
 
 ## Required Permissions
 

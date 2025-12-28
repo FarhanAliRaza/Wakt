@@ -31,7 +31,6 @@ class BrickEnforcementService : Service() {
     private var enforcementJob: Job? = null
     private var isEnforcing = false
     private var lastKnownForegroundApp: String? = null  // Cache to prevent flickering
-    private var launcherDetectedTime: Long = 0L  // When we last detected launcher (for sticky overlay)
     private var lastAllowedAppTime: Long = 0L  // When we last confirmed an allowed app was in foreground
     
     companion object {
@@ -268,28 +267,12 @@ class BrickEnforcementService : Service() {
      * Get the currently active foreground app package name
      * Uses the single reliable source from AppBlockingService (AccessibilityService)
      */
-    private val launcherPackages = setOf(
-        "com.google.android.apps.nexuslauncher",
-        "com.sec.android.app.launcher",
-        "com.android.launcher",
-        "com.android.launcher3",
-        "com.miui.home",
-        "com.huawei.android.launcher",
-        "com.oppo.launcher",
-        "com.vivo.launcher"
-    )
-
     private fun getForegroundPackageName(): String? {
         val currentTime = System.currentTimeMillis()
 
         // Method 1: Try AccessibilityService for real-time data (most reliable)
         val accessibilityPackage = AppBlockingService.getForegroundPackageReliably()
         if (!accessibilityPackage.isNullOrBlank()) {
-            // Check if it's a launcher - return it to trigger overlay
-            if (launcherPackages.any { accessibilityPackage.startsWith(it) }) {
-                return accessibilityPackage
-            }
-            // Valid non-launcher app
             return accessibilityPackage
         }
 
@@ -326,20 +309,7 @@ class BrickEnforcementService : Service() {
     private suspend fun isEmergencyOrEssentialApp(packageName: String?): Boolean {
         if (packageName.isNullOrBlank()) return false
 
-        // Launchers - show overlay (user on home screen)
-        val launcherPackages = listOf(
-            "com.google.android.apps.nexuslauncher",
-            "com.sec.android.app.launcher",
-            "com.android.launcher",
-            "com.android.launcher3",
-            "com.miui.home",
-            "com.huawei.android.launcher",
-            "com.oppo.launcher",
-            "com.vivo.launcher"
-        )
-        if (launcherPackages.any { packageName.startsWith(it) }) return false
-
-        // System essentials - always allowed
+        // System essentials - always allowed (for navigation/emergency)
         val safetyPackages = listOf("com.android.systemui", "com.android.settings")
         if (safetyPackages.any { packageName.startsWith(it) }) return true
 

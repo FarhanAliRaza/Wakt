@@ -24,7 +24,7 @@ fun LockScreen(
     missingPermissions: List<String> = emptyList(),
     onRequestPermissions: () -> Unit = {}
 ) {
-    val tabs = listOf("Phone", "App")
+    val tabs = listOf("Phone", "App/Site")
 
     Column(
         modifier = Modifier

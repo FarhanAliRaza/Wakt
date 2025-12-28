@@ -309,27 +309,61 @@ class EssentialAppsManager @Inject constructor(
     }
     
     /**
-     * Get default emergency contact packages that should always be allowed
+     * Get default dialer package dynamically
+     */
+    fun getDefaultDialerPackage(): String? {
+        return try {
+            val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+            telecomManager?.defaultDialerPackage
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting default dialer", e)
+            null
+        }
+    }
+
+    /**
+     * Get default SMS package dynamically
+     */
+    fun getDefaultSmsPackage(): String? {
+        return try {
+            android.provider.Telephony.Sms.getDefaultSmsPackage(context)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting default SMS app", e)
+            null
+        }
+    }
+
+    /**
+     * Get emergency contact packages that should always be allowed (dynamic detection)
      */
     fun getEmergencyContactPackages(): List<String> {
-        return listOf(
-            "com.android.dialer", // Phone app
-            "com.android.emergency", // Emergency SOS
-            "com.android.contacts", // Contacts
-            "com.samsung.android.dialer", // Samsung Phone
-            "com.google.android.dialer", // Google Phone
-            "com.android.incallui" // In-call UI
-        )
+        val packages = mutableListOf<String>()
+
+        // Add default dialer
+        getDefaultDialerPackage()?.let { packages.add(it) }
+
+        // Add default SMS app
+        getDefaultSmsPackage()?.let { packages.add(it) }
+
+        // Always include these system packages
+        packages.addAll(listOf(
+            "com.android.phone",      // Phone service (handles calls)
+            "com.android.emergency",  // Emergency SOS
+            "com.android.incallui"    // In-call UI
+        ))
+
+        return packages.distinct()
     }
-    
+
     /**
      * Check if package is an emergency-related app
      */
     fun isEmergencyApp(packageName: String): Boolean {
+        // Check against dynamically detected packages
         val emergencyPackages = getEmergencyContactPackages()
-        return emergencyPackages.any { packageName.startsWith(it) } ||
-               packageName.contains("emergency") ||
-               packageName.contains("911") ||
-               packageName.contains("dialer")
+        if (emergencyPackages.contains(packageName)) return true
+
+        // Also check for emergency keywords
+        return packageName.contains("emergency") || packageName.contains("911")
     }
 }

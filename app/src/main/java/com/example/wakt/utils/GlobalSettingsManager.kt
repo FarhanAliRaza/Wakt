@@ -24,6 +24,9 @@ class GlobalSettingsManager @Inject constructor(
     private val _clickCount = MutableStateFlow(getClickCount())
     val clickCount: StateFlow<Int> = _clickCount.asStateFlow()
 
+    private val _defaultAllowedApps = MutableStateFlow(getDefaultAllowedApps())
+    val defaultAllowedApps: StateFlow<Set<String>> = _defaultAllowedApps.asStateFlow()
+
     fun getChallengeType(): ChallengeType {
         val ordinal = prefs.getInt(KEY_CHALLENGE_TYPE, ChallengeType.WAIT.ordinal)
         return ChallengeType.values().getOrElse(ordinal) { ChallengeType.WAIT }
@@ -52,11 +55,22 @@ class GlobalSettingsManager @Inject constructor(
         _clickCount.value = count.coerceIn(MIN_CLICK_COUNT, MAX_CLICK_COUNT)
     }
 
+    fun getDefaultAllowedApps(): Set<String> {
+        val apps = prefs.getString(KEY_DEFAULT_ALLOWED_APPS, "") ?: ""
+        return if (apps.isBlank()) emptySet() else apps.split(",").toSet()
+    }
+
+    fun setDefaultAllowedApps(apps: Set<String>) {
+        prefs.edit().putString(KEY_DEFAULT_ALLOWED_APPS, apps.joinToString(",")).apply()
+        _defaultAllowedApps.value = apps
+    }
+
     companion object {
         private const val PREFS_NAME = "wakt_global_settings"
         private const val KEY_CHALLENGE_TYPE = "challenge_type"
         private const val KEY_WAIT_TIME = "wait_time_minutes"
         private const val KEY_CLICK_COUNT = "click_count"
+        private const val KEY_DEFAULT_ALLOWED_APPS = "default_allowed_apps"
         private const val DEFAULT_WAIT_TIME = 10
         private const val DEFAULT_CLICK_COUNT = 500
         const val MIN_WAIT_TIME = 5

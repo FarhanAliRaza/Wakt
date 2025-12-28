@@ -52,13 +52,14 @@ enum class DialogStep {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateSessionDialog(
+    defaultAllowedApps: Set<String> = emptySet(),
     onDismiss: () -> Unit,
     onCreateSession: (BrickSessionType, String, SessionConfig) -> Unit
 ) {
     var currentStep by remember { mutableStateOf(DialogStep.NAME) }
     var sessionName by remember { mutableStateOf("") }
     var selectedType by remember { mutableStateOf(BrickSessionType.FOCUS_SESSION) }
-    var sessionConfig by remember { mutableStateOf(SessionConfig()) }
+    var sessionConfig by remember { mutableStateOf(SessionConfig(selectedEssentialApps = defaultAllowedApps)) }
     
     Dialog(onDismissRequest = onDismiss) {
         Card(

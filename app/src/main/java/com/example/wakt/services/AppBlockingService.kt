@@ -371,7 +371,32 @@ class AppBlockingService : AccessibilityService() {
             false
         }
     }
-    
+
+    /**
+     * Get the default dialer package dynamically
+     */
+    private fun getDefaultDialerPackage(): String? {
+        return try {
+            val telecomManager = getSystemService(android.content.Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+            telecomManager?.defaultDialerPackage
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting default dialer", e)
+            null
+        }
+    }
+
+    /**
+     * Get the default SMS package dynamically
+     */
+    private fun getDefaultSmsPackage(): String? {
+        return try {
+            android.provider.Telephony.Sms.getDefaultSmsPackage(this)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting default SMS app", e)
+            null
+        }
+    }
+
     private fun extractUrlFromBrowser(event: AccessibilityEvent): String? {
         try {
             val rootNode = rootInActiveWindow ?: return null
@@ -989,15 +1014,22 @@ class AppBlockingService : AccessibilityService() {
                 return
             }
 
-            // Allow dialer apps for emergency calls
-            val dialerPackages = listOf(
-                "com.android.dialer",
-                "com.google.android.dialer",
-                "com.samsung.android.dialer",
-                "com.android.phone"
-            )
-            if (dialerPackages.contains(packageName)) {
-                Log.d(TAG, "Allowing dialer during brick session: $packageName")
+            // Allow default dialer for emergency calls (dynamic detection)
+            val defaultDialer = getDefaultDialerPackage()
+            if (defaultDialer != null && packageName == defaultDialer) {
+                Log.d(TAG, "Allowing default dialer during brick session: $packageName")
+                return
+            }
+            // Also allow com.android.phone as it handles call UI on some devices
+            if (packageName == "com.android.phone") {
+                Log.d(TAG, "Allowing phone service during brick session: $packageName")
+                return
+            }
+
+            // Allow default SMS app
+            val defaultSms = getDefaultSmsPackage()
+            if (defaultSms != null && packageName == defaultSms) {
+                Log.d(TAG, "Allowing default SMS app during brick session: $packageName")
                 return
             }
 

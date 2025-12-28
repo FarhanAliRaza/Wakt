@@ -9,6 +9,7 @@ import com.example.wakt.data.database.entity.PhoneBrickSession
 import com.example.wakt.presentation.screens.phonebrick.SessionConfig
 import com.example.wakt.utils.BrickSessionManager
 import com.example.wakt.utils.EssentialAppsManager
+import com.example.wakt.utils.GlobalSettingsManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -20,11 +21,14 @@ import javax.inject.Inject
 class PhoneBrickViewModel @Inject constructor(
     private val phoneBrickSessionDao: PhoneBrickSessionDao,
     private val brickSessionManager: BrickSessionManager,
-    private val essentialAppsManager: EssentialAppsManager
+    private val essentialAppsManager: EssentialAppsManager,
+    private val globalSettingsManager: GlobalSettingsManager
 ) : ViewModel() {
-    
+
     private val _uiState = MutableStateFlow(PhoneBrickUiState())
     val uiState: StateFlow<PhoneBrickUiState> = _uiState.asStateFlow()
+
+    val defaultAllowedApps: StateFlow<Set<String>> = globalSettingsManager.defaultAllowedApps
     
     private var sessionMonitorJob: Job? = null
     
