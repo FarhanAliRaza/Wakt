@@ -62,19 +62,33 @@ class PhoneBrickViewModel @Inject constructor(
     private fun observeCurrentSession() {
         sessionMonitorJob?.cancel()
         sessionMonitorJob = viewModelScope.launch {
+            var lastSession: PhoneBrickSession? = null
+            var lastMinutes: Int? = null
+            var lastSeconds: Int? = null
+
             try {
                 // Monitor current session state with proper cancellation
                 while (true) {
                     val currentSession = brickSessionManager.getCurrentSession()
                     val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes()
                     val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds()
-                    
-                    _uiState.value = _uiState.value.copy(
-                        currentActiveSession = currentSession,
-                        currentSessionRemainingMinutes = remainingMinutes,
-                        currentSessionRemainingSeconds = remainingSeconds
-                    )
-                    
+
+                    // Only update state if values actually changed to avoid unnecessary recomposition
+                    if (currentSession != lastSession ||
+                        remainingMinutes != lastMinutes ||
+                        remainingSeconds != lastSeconds) {
+
+                        _uiState.value = _uiState.value.copy(
+                            currentActiveSession = currentSession,
+                            currentSessionRemainingMinutes = remainingMinutes,
+                            currentSessionRemainingSeconds = remainingSeconds
+                        )
+
+                        lastSession = currentSession
+                        lastMinutes = remainingMinutes
+                        lastSeconds = remainingSeconds
+                    }
+
                     // Update more frequently when less than 2 minutes remaining
                     val updateInterval = if ((remainingMinutes ?: 60) < 2) 1_000L else 10_000L
                     delay(updateInterval)

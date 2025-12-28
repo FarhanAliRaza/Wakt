@@ -18,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class AppInfo(
     val name: String,
@@ -37,10 +39,12 @@ fun EssentialAppSelectorDialog(
     
     val context = LocalContext.current
     
-    // Load installed apps
+    // Load installed apps on IO thread to avoid blocking main thread
     LaunchedEffect(Unit) {
         try {
-            installedApps = loadInstalledApps(context)
+            installedApps = withContext(Dispatchers.IO) {
+                loadInstalledApps(context)
+            }
         } catch (e: Exception) {
             // Log error but don't crash
         } finally {

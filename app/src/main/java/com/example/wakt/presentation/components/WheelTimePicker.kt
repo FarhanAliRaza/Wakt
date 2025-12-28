@@ -16,9 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.roundToInt
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -92,34 +90,16 @@ private fun LoopingWheelPicker(
     val initialIndex = (middleSection * itemCount) + selectedItem
 
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
-    val coroutineScope = rememberCoroutineScope()
 
-    // Calculate the visually centered index in real-time
-    val centeredIndex by remember {
-        derivedStateOf {
-            val firstVisible = listState.firstVisibleItemIndex
-            val offset = listState.firstVisibleItemScrollOffset
-            // If scrolled more than half the item height, the next item is centered
-            if (offset > itemHeightPx * 0.5f) {
-                firstVisible + 1
-            } else {
-                firstVisible
-            }
-        }
-    }
-
-    // Handle scroll end - snap and notify
+    // Handle scroll end - notify selection change (only when scroll stops)
     LaunchedEffect(listState.isScrollInProgress) {
         if (!listState.isScrollInProgress) {
+            val firstVisible = listState.firstVisibleItemIndex
+            val offset = listState.firstVisibleItemScrollOffset
+            val centeredIndex = if (offset > itemHeightPx * 0.5f) firstVisible + 1 else firstVisible
             val actualValue = centeredIndex % itemCount
-
             if (actualValue != selectedItem) {
                 onItemSelected(actualValue)
-            }
-
-            // Snap to the item
-            coroutineScope.launch {
-                listState.animateScrollToItem(centeredIndex)
             }
         }
     }
@@ -134,19 +114,31 @@ private fun LoopingWheelPicker(
             contentPadding = PaddingValues(vertical = itemHeight),
             flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
         ) {
-            items(totalItems) { index ->
+            items(
+                count = totalItems,
+                key = { it }
+            ) { index ->
                 val actualValue = index % itemCount
-                val distanceFromCenter = abs(index - centeredIndex)
 
-                val alpha = when (distanceFromCenter) {
-                    0 -> 1f
-                    1 -> 0.4f
+                // Calculate distance from center using derivedStateOf to minimize recomposition
+                val distanceFromCenter by remember {
+                    derivedStateOf {
+                        val firstVisible = listState.firstVisibleItemIndex
+                        val offset = listState.firstVisibleItemScrollOffset
+                        val centeredIndex = if (offset > itemHeightPx * 0.5f) firstVisible + 1 else firstVisible
+                        abs(index - centeredIndex)
+                    }
+                }
+
+                val alpha = when {
+                    distanceFromCenter == 0 -> 1f
+                    distanceFromCenter == 1 -> 0.4f
                     else -> 0.15f
                 }
 
-                val scale = when (distanceFromCenter) {
-                    0 -> 1f
-                    1 -> 0.8f
+                val scale = when {
+                    distanceFromCenter == 0 -> 1f
+                    distanceFromCenter == 1 -> 0.8f
                     else -> 0.65f
                 }
 

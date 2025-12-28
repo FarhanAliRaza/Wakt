@@ -66,18 +66,32 @@ class LockViewModel @Inject constructor(
     private fun observeCurrentSession() {
         sessionMonitorJob?.cancel()
         sessionMonitorJob = viewModelScope.launch {
+            var lastSession: PhoneBrickSession? = null
+            var lastMinutes: Int? = null
+            var lastSeconds: Int? = null
+
             try {
                 while (true) {
                     val currentSession = brickSessionManager.getCurrentSession()
                     val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes()
                     val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds()
 
-                    _uiState.update {
-                        it.copy(
-                            currentActiveSession = currentSession,
-                            currentSessionRemainingMinutes = remainingMinutes,
-                            currentSessionRemainingSeconds = remainingSeconds
-                        )
+                    // Only update state if values actually changed to avoid unnecessary recomposition
+                    if (currentSession != lastSession ||
+                        remainingMinutes != lastMinutes ||
+                        remainingSeconds != lastSeconds) {
+
+                        _uiState.update {
+                            it.copy(
+                                currentActiveSession = currentSession,
+                                currentSessionRemainingMinutes = remainingMinutes,
+                                currentSessionRemainingSeconds = remainingSeconds
+                            )
+                        }
+
+                        lastSession = currentSession
+                        lastMinutes = remainingMinutes
+                        lastSeconds = remainingSeconds
                     }
 
                     val updateInterval = if ((remainingMinutes ?: 60) < 2) 1_000L else 10_000L

@@ -26,6 +26,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.example.wakt.data.database.entity.ChallengeType
 import com.example.wakt.presentation.ui.theme.WaktGradient
 import com.example.wakt.utils.GlobalSettingsManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun SettingsScreen(
@@ -293,7 +295,9 @@ private fun DefaultAllowedAppsSelectorDialog(
 
     LaunchedEffect(Unit) {
         try {
-            installedApps = loadInstalledApps(context)
+            installedApps = withContext(Dispatchers.IO) {
+                loadInstalledApps(context)
+            }
         } catch (e: Exception) {
             // Log error but don't crash
         } finally {
