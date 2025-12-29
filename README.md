@@ -16,7 +16,9 @@
 
 ## Download
 
-Get the latest APK from [Releases](../../releases).
+[![Download APK](https://img.shields.io/github/v/release/FarhanAliRaza/Wakt?label=Download%20APK&style=for-the-badge)](https://github.com/FarhanAliRaza/Wakt/releases/latest/download/app-release.apk)
+
+[View all releases](https://github.com/FarhanAliRaza/Wakt/releases)
 
 ## Features
 
