@@ -37,9 +37,9 @@ fun WheelTimePicker(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Hours wheel (0-23)
-        SimpleWheelPicker(
-            items = (0..23).toList(),
+        // Hours wheel (0-23) - infinite scroll
+        InfiniteWheelPicker(
+            itemCount = 24,
             selectedItem = hours,
             onItemSelected = onHoursChange,
             itemHeight = itemHeight,
@@ -61,9 +61,9 @@ fun WheelTimePicker(
             )
         }
 
-        // Minutes wheel (0-59)
-        SimpleWheelPicker(
-            items = (0..59).toList(),
+        // Minutes wheel (0-59) - infinite scroll
+        InfiniteWheelPicker(
+            itemCount = 60,
             selectedItem = minutes,
             onItemSelected = onMinutesChange,
             itemHeight = itemHeight,
@@ -72,10 +72,14 @@ fun WheelTimePicker(
     }
 }
 
+/**
+ * Infinite scrolling wheel picker.
+ * Creates a virtually infinite list by repeating items and starting in the middle.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SimpleWheelPicker(
-    items: List<Int>,
+private fun InfiniteWheelPicker(
+    itemCount: Int,
     selectedItem: Int,
     onItemSelected: (Int) -> Unit,
     itemHeight: Dp,
@@ -84,16 +88,35 @@ private fun SimpleWheelPicker(
     val density = LocalDensity.current
     val itemHeightPx = with(density) { itemHeight.toPx() }
 
-    // Simple finite list - no infinite scroll overhead
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = selectedItem)
+    // Create a large virtual list by repeating items
+    // Use 10000 repetitions to make it feel infinite
+    val repetitions = 10000
+    val totalItems = itemCount * repetitions
+    val middleOffset = (repetitions / 2) * itemCount
+
+    // Calculate initial index in the middle of the virtual list
+    val initialIndex = middleOffset + selectedItem
+
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+
+    // Track if we should skip the next scroll-to-item to avoid loops
+    var isInternalScroll by remember { mutableStateOf(false) }
 
     // Scroll to correct position when selectedItem changes externally
     LaunchedEffect(selectedItem) {
+        if (isInternalScroll) {
+            isInternalScroll = false
+            return@LaunchedEffect
+        }
+
         val currentCenteredIndex = listState.firstVisibleItemIndex +
             if (listState.firstVisibleItemScrollOffset > itemHeightPx * 0.5f) 1 else 0
+        val currentValue = currentCenteredIndex % itemCount
 
-        if (currentCenteredIndex != selectedItem) {
-            listState.scrollToItem(selectedItem)
+        if (currentValue != selectedItem) {
+            // Calculate the closest position to scroll to
+            val targetIndex = (currentCenteredIndex / itemCount) * itemCount + selectedItem
+            listState.scrollToItem(targetIndex)
         }
     }
 
@@ -103,9 +126,18 @@ private fun SimpleWheelPicker(
             val firstVisible = listState.firstVisibleItemIndex
             val offset = listState.firstVisibleItemScrollOffset
             val centeredIndex = if (offset > itemHeightPx * 0.5f) firstVisible + 1 else firstVisible
-            val clampedIndex = centeredIndex.coerceIn(0, items.lastIndex)
-            if (clampedIndex != selectedItem) {
-                onItemSelected(clampedIndex)
+            val actualValue = ((centeredIndex % itemCount) + itemCount) % itemCount
+
+            if (actualValue != selectedItem) {
+                isInternalScroll = true
+                onItemSelected(actualValue)
+            }
+
+            // Re-center if we've scrolled too far from middle (to maintain "infinite" feel)
+            val distanceFromMiddle = abs(centeredIndex - middleOffset)
+            if (distanceFromMiddle > itemCount * 100) {
+                val targetIndex = middleOffset + actualValue
+                listState.scrollToItem(targetIndex)
             }
         }
     }
@@ -124,11 +156,12 @@ private fun SimpleWheelPicker(
             flingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
         ) {
             items(
-                count = items.size,
+                count = totalItems,
                 key = { it }
             ) { index ->
-                WheelPickerItem(
-                    value = items[index],
+                val actualValue = ((index % itemCount) + itemCount) % itemCount
+                InfiniteWheelPickerItem(
+                    value = actualValue,
                     index = index,
                     itemHeightPx = itemHeightPx,
                     itemHeight = itemHeight,
@@ -144,7 +177,7 @@ private fun SimpleWheelPicker(
  * Individual wheel picker item - uses graphicsLayer for alpha/scale to avoid recomposition during scroll
  */
 @Composable
-private fun WheelPickerItem(
+private fun InfiniteWheelPickerItem(
     value: Int,
     index: Int,
     itemHeightPx: Float,

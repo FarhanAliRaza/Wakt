@@ -11,6 +11,7 @@ import com.example.wakt.data.database.dao.PhoneBrickSessionDao
 import com.example.wakt.data.database.dao.BrickSessionLogDao
 import com.example.wakt.data.database.entity.*
 import com.example.wakt.presentation.activities.BrickLauncherActivity
+import com.example.wakt.presentation.activities.ScheduleReminderActivity
 import com.example.wakt.services.BrickEnforcementService
 import kotlinx.coroutines.*
 import java.util.*
@@ -36,7 +37,10 @@ class BrickSessionManager @Inject constructor(
     // Current session state
     private var currentBrickSession: PhoneBrickSession? = null
     private var currentSessionLog: BrickSessionLog? = null
-    
+
+    // Track sessions that have been reminded (to avoid duplicate reminders)
+    private val remindedSessionIds = mutableSetOf<Long>()
+
     init {
         startScheduleMonitoring()
         checkForOngoingSession()
@@ -238,7 +242,39 @@ class BrickSessionManager @Inject constructor(
                     Log.d(TAG, "Schedule '${session.name}' (${session.startHour}:${session.startMinute} - ${session.endHour}:${session.endMinute}): " +
                         "current=$currentHour:$currentMinute, inWindow=$isInWindow")
 
-                    // Auto-start scheduled sessions when in time window
+                    // Skip if session was emergency canceled for this period
+                    val canceledUntil = session.canceledUntil
+                    if (canceledUntil != null && System.currentTimeMillis() < canceledUntil) {
+                        Log.d(TAG, "Skipping session '${session.name}': emergency canceled until $canceledUntil")
+                        continue
+                    }
+
+                    // Skip APPS schedules - they don't lock the phone, only block specific apps
+                    // AppBlockingService handles per-app blocking via getActiveAppSchedulesForPackage()
+                    if (session.scheduleTargetType == ScheduleTargetType.APPS) {
+                        Log.d(TAG, "Skipping APPS schedule '${session.name}' - handled by AppBlockingService")
+                        continue
+                    }
+
+                    // Check for reminder before session starts
+                    if (session.reminderEnabled &&
+                        session.isActive &&
+                        !isInWindow &&
+                        !remindedSessionIds.contains(session.id)) {
+                        val minutesUntilStart = calculateMinutesUntilStart(currentHour, currentMinute, session)
+                        if (minutesUntilStart in 1..session.reminderMinutesBefore) {
+                            Log.i(TAG, "Showing reminder for session '${session.name}': $minutesUntilStart minutes until start")
+                            showScheduleReminder(session, minutesUntilStart)
+                            remindedSessionIds.add(session.id)
+                        }
+                    }
+
+                    // Clear reminder tracking when session actually starts (so reminder can fire again tomorrow)
+                    if (isInWindow && remindedSessionIds.contains(session.id)) {
+                        remindedSessionIds.remove(session.id)
+                    }
+
+                    // Auto-start scheduled sessions when in time window (PHONE schedules only)
                     if (isInWindow && session.isActive) {
                         Log.i(TAG, "Starting scheduled session: ${session.name}")
                         startScheduledSession(session)
@@ -251,6 +287,67 @@ class BrickSessionManager @Inject constructor(
         }
     }
     
+    /**
+     * Calculate the end time for a scheduled session based on its schedule configuration.
+     * Used when currentSessionEndTime is not available (e.g., for emergency cancel tracking).
+     */
+    private fun calculateScheduleEndTime(session: PhoneBrickSession): Long? {
+        if (session.sessionType != BrickSessionType.SLEEP_SCHEDULE) return null
+        val endHour = session.endHour ?: return null
+        val endMinute = session.endMinute ?: 0
+
+        val calendar = Calendar.getInstance()
+        val currentHour = calendar.get(Calendar.HOUR_OF_DAY)
+        val currentMinute = calendar.get(Calendar.MINUTE)
+
+        // If end time is before or equal to current time, it's tomorrow
+        if (endHour < currentHour || (endHour == currentHour && endMinute <= currentMinute)) {
+            calendar.add(Calendar.DAY_OF_MONTH, 1)
+        }
+        calendar.set(Calendar.HOUR_OF_DAY, endHour)
+        calendar.set(Calendar.MINUTE, endMinute)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+
+        return calendar.timeInMillis
+    }
+
+    /**
+     * Calculate minutes until a scheduled session starts.
+     * Returns negative value if session has already started.
+     */
+    private fun calculateMinutesUntilStart(
+        currentHour: Int,
+        currentMinute: Int,
+        session: PhoneBrickSession
+    ): Int {
+        val startHour = session.startHour ?: return -1
+        val startMinute = session.startMinute ?: 0
+
+        val currentTotalMinutes = currentHour * 60 + currentMinute
+        val startTotalMinutes = startHour * 60 + startMinute
+
+        return if (startTotalMinutes > currentTotalMinutes) {
+            // Same day
+            startTotalMinutes - currentTotalMinutes
+        } else {
+            // Crosses midnight - start is tomorrow
+            (24 * 60 - currentTotalMinutes) + startTotalMinutes
+        }
+    }
+
+    /**
+     * Show the schedule reminder overlay activity.
+     */
+    private fun showScheduleReminder(session: PhoneBrickSession, minutesUntilStart: Int) {
+        val intent = Intent(context, ScheduleReminderActivity::class.java).apply {
+            putExtra(ScheduleReminderActivity.EXTRA_SESSION_NAME, session.name)
+            putExtra(ScheduleReminderActivity.EXTRA_MINUTES_UNTIL_START, minutesUntilStart)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        context.startActivity(intent)
+    }
+
     /**
      * Check if current time is within a scheduled session window
      * Returns false for invalid schedules (e.g., start == end)
@@ -441,6 +538,13 @@ class BrickSessionManager @Inject constructor(
             withContext(Dispatchers.IO) {
                 // Update session as broken
                 phoneBrickSessionDao.emergencyBreakSession(session.id)
+
+                // Set canceledUntil to prevent auto-restart for this schedule period
+                val cancelUntil = session.currentSessionEndTime ?: calculateScheduleEndTime(session)
+                if (cancelUntil != null) {
+                    phoneBrickSessionDao.setCanceledUntil(session.id, cancelUntil)
+                    Log.d(TAG, "Set canceledUntil to $cancelUntil for session: ${session.name}")
+                }
 
                 // Log emergency override
                 brickSessionLogDao.logEmergencyOverride(sessionLog.id, currentTime, reason)

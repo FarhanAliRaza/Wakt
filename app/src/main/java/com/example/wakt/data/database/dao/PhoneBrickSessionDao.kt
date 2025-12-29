@@ -92,6 +92,9 @@ interface PhoneBrickSessionDao {
     @Query("UPDATE phone_brick_sessions SET isActive = 1 WHERE id = :id")
     suspend fun activateSession(id: Long)
 
+    @Query("UPDATE phone_brick_sessions SET canceledUntil = :canceledUntil WHERE id = :id")
+    suspend fun setCanceledUntil(id: Long, canceledUntil: Long?)
+
     // Get active app schedules that include a specific package
     @Query("""
         SELECT * FROM phone_brick_sessions

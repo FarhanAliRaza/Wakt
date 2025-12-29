@@ -73,6 +73,7 @@ fun PermissionDialog(
     val needsAccessibility = missingPermissions.contains("Accessibility Service")
     val needsOverlay = missingPermissions.contains("Display over other apps")
     val needsUsageAccess = missingPermissions.contains("Usage Access")
+    val needsNotifications = missingPermissions.contains("Notifications")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -99,6 +100,12 @@ fun PermissionDialog(
                 if (needsUsageAccess) {
                     Text(
                         text = "• Usage Access - Detect foreground app",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                if (needsNotifications) {
+                    Text(
+                        text = "• Notifications - Show session status",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -136,6 +143,16 @@ fun PermissionDialog(
                         }
                     ) {
                         Text("Grant Usage Access")
+                    }
+                }
+                if (needsNotifications) {
+                    Button(
+                        onClick = {
+                            PermissionHelper.requestNotificationPermission(context)
+                            onDismiss()
+                        }
+                    ) {
+                        Text("Grant Notifications")
                     }
                 }
             }

@@ -27,7 +27,7 @@ import com.example.wakt.data.database.entity.BrickSessionLog
         EssentialApp::class,
         BrickSessionLog::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -176,6 +176,15 @@ abstract class WaktDatabase : RoomDatabase() {
                 """)
                 database.execSQL("""
                     ALTER TABLE phone_brick_sessions ADD COLUMN vibrate INTEGER NOT NULL DEFAULT 1
+                """)
+            }
+        }
+
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Add canceledUntil column to prevent auto-restart after emergency cancel
+                database.execSQL("""
+                    ALTER TABLE phone_brick_sessions ADD COLUMN canceledUntil INTEGER DEFAULT NULL
                 """)
             }
         }

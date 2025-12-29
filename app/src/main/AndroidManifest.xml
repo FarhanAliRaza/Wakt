@@ -30,6 +30,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
+
+    <!-- Permission to post notifications (required for Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" /> -->
 
     <application
@@ -92,7 +95,16 @@
             android:theme="@style/Theme.Wakt"
             android:launchMode="singleTop"
             android:excludeFromRecents="true" />
-        
+
+        <!-- Schedule Reminder Activity - shows before scheduled lock starts -->
+        <activity
+            android:name=".presentation.activities.ScheduleReminderActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Wakt"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:showOnLockScreen="true" />
+
         <service
             android:name=".services.AppBlockingService"
             android:enabled="true"

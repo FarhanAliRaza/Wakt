@@ -216,6 +216,101 @@ class ScheduleBlockLogicTest {
         assertFalse(isAppAllowedInSession("com.whatsapp", null))
     }
 
+    // ==================== EMERGENCY CANCEL TESTS ====================
+
+    @Test
+    fun `session should be skipped when canceledUntil is in the future`() {
+        val currentTime = 1000000L
+        val canceledUntil = 2000000L  // In the future
+
+        assertTrue(shouldSkipCanceledSession(currentTime, canceledUntil))
+    }
+
+    @Test
+    fun `session should not be skipped when canceledUntil has passed`() {
+        val currentTime = 2000000L
+        val canceledUntil = 1000000L  // In the past
+
+        assertFalse(shouldSkipCanceledSession(currentTime, canceledUntil))
+    }
+
+    @Test
+    fun `session should not be skipped when canceledUntil equals current time`() {
+        val currentTime = 1000000L
+        val canceledUntil = 1000000L  // Exactly equal
+
+        assertFalse(shouldSkipCanceledSession(currentTime, canceledUntil))
+    }
+
+    @Test
+    fun `session should not be skipped when canceledUntil is null`() {
+        val currentTime = 1000000L
+        val canceledUntil: Long? = null
+
+        assertFalse(shouldSkipCanceledSession(currentTime, canceledUntil))
+    }
+
+    @Test
+    fun `schedule end time should be same day when end hour is after current hour`() {
+        // Current: 10:00, End: 17:00 -> same day
+        val result = calculateScheduleEndTimeTest(10, 0, 17, 0)
+        assertFalse(result.isNextDay)
+        assertEquals(17, result.endHour)
+        assertEquals(0, result.endMinute)
+    }
+
+    @Test
+    fun `schedule end time should be next day when end hour is before current hour`() {
+        // Current: 23:00, End: 6:00 -> next day
+        val result = calculateScheduleEndTimeTest(23, 0, 6, 0)
+        assertTrue(result.isNextDay)
+        assertEquals(6, result.endHour)
+        assertEquals(0, result.endMinute)
+    }
+
+    @Test
+    fun `schedule end time should be next day when end time equals current time`() {
+        // Current: 6:00, End: 6:00 -> next day (already passed)
+        val result = calculateScheduleEndTimeTest(6, 0, 6, 0)
+        assertTrue(result.isNextDay)
+    }
+
+    @Test
+    fun `schedule end time should be next day when end minute is before current minute same hour`() {
+        // Current: 6:30, End: 6:15 -> next day
+        val result = calculateScheduleEndTimeTest(6, 30, 6, 15)
+        assertTrue(result.isNextDay)
+    }
+
+    @Test
+    fun `emergency cancel should prevent auto-start within time window`() {
+        // Simulate: Schedule 23:00 - 6:00, current time 1:00 AM, emergency canceled until 6:00 AM
+        val currentHour = 1
+        val currentMinute = 0
+        val startHour = 23
+        val endHour = 6
+
+        // Session is in time window
+        assertTrue(isTimeInScheduleWindow(currentHour, currentMinute, startHour, 0, endHour, 0))
+
+        // But canceledUntil is in the future (6:00 AM today)
+        val currentTimeMillis = System.currentTimeMillis()
+        val canceledUntilMillis = currentTimeMillis + (5 * 60 * 60 * 1000)  // 5 hours in the future
+
+        // Should skip because of canceledUntil
+        assertTrue(shouldSkipCanceledSession(currentTimeMillis, canceledUntilMillis))
+    }
+
+    @Test
+    fun `session should auto-start after canceledUntil expires`() {
+        // Next day, after canceledUntil has passed
+        val currentTimeMillis = System.currentTimeMillis()
+        val canceledUntilMillis = currentTimeMillis - (1 * 60 * 60 * 1000)  // 1 hour in the past
+
+        // Should NOT skip because canceledUntil has passed
+        assertFalse(shouldSkipCanceledSession(currentTimeMillis, canceledUntilMillis))
+    }
+
     // ==================== HELPER METHODS (simulate actual logic) ====================
 
     /**
@@ -327,5 +422,37 @@ class ScheduleBlockLogicTest {
     private fun isAppAllowedInSession(packageName: String, allowedApps: String?): Boolean {
         val parsed = parseAllowedApps(allowedApps)
         return parsed.contains(packageName)
+    }
+
+    /**
+     * Check if a session should be skipped due to emergency cancel
+     * Mirrors BrickSessionManager.checkScheduledSessions() canceledUntil check
+     */
+    private fun shouldSkipCanceledSession(currentTime: Long, canceledUntil: Long?): Boolean {
+        return canceledUntil != null && currentTime < canceledUntil
+    }
+
+    /**
+     * Result of schedule end time calculation
+     */
+    data class ScheduleEndTimeResult(
+        val endHour: Int,
+        val endMinute: Int,
+        val isNextDay: Boolean
+    )
+
+    /**
+     * Calculate if schedule end time is same day or next day
+     * Mirrors BrickSessionManager.calculateScheduleEndTime() logic
+     */
+    private fun calculateScheduleEndTimeTest(
+        currentHour: Int,
+        currentMinute: Int,
+        endHour: Int,
+        endMinute: Int
+    ): ScheduleEndTimeResult {
+        // If end time is before or equal to current time, it's tomorrow
+        val isNextDay = endHour < currentHour || (endHour == currentHour && endMinute <= currentMinute)
+        return ScheduleEndTimeResult(endHour, endMinute, isNextDay)
     }
 }

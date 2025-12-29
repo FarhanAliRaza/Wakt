@@ -32,7 +32,8 @@ data class PhoneBrickSession(
     val targetPackages: String = "", // For APP type schedules (comma-separated)
     val reminderEnabled: Boolean = false, // Show notification before lock starts
     val reminderMinutesBefore: Int = 15, // Minutes before lock to remind
-    val vibrate: Boolean = true // Vibrate on lock start
+    val vibrate: Boolean = true, // Vibrate on lock start
+    val canceledUntil: Long? = null // Timestamp until which auto-start is blocked (after emergency cancel)
 )
 
 enum class BrickSessionType {
