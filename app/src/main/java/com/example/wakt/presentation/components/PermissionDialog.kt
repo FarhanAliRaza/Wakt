@@ -72,7 +72,6 @@ fun PermissionDialog(
 ) {
     val needsAccessibility = missingPermissions.contains("Accessibility Service")
     val needsOverlay = missingPermissions.contains("Display over other apps")
-    val needsUsageAccess = missingPermissions.contains("Usage Access")
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -93,12 +92,6 @@ fun PermissionDialog(
                 if (needsOverlay) {
                     Text(
                         text = "• Display over other apps - Show blocking screen",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-                if (needsUsageAccess) {
-                    Text(
-                        text = "• Usage Access - Detect foreground app",
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -126,16 +119,6 @@ fun PermissionDialog(
                         }
                     ) {
                         Text("Grant Overlay")
-                    }
-                }
-                if (needsUsageAccess) {
-                    Button(
-                        onClick = {
-                            PermissionHelper.requestUsageAccessPermission(context)
-                            onDismiss()
-                        }
-                    ) {
-                        Text("Grant Usage Access")
                     }
                 }
             }

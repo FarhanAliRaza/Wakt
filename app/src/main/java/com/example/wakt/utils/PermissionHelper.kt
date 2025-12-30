@@ -116,8 +116,7 @@ object PermissionHelper {
 
     fun areAllPermissionsGranted(context: Context): Boolean {
         return isAccessibilityServiceEnabled(context) &&
-               canDrawOverOtherApps(context) &&
-               isUsageAccessGranted(context)
+               canDrawOverOtherApps(context)
     }
 
     fun getMissingPermissions(context: Context): List<String> {
@@ -129,10 +128,6 @@ object PermissionHelper {
 
         if (!canDrawOverOtherApps(context)) {
             missing.add("Display over other apps")
-        }
-
-        if (!isUsageAccessGranted(context)) {
-            missing.add("Usage Access")
         }
 
         return missing
