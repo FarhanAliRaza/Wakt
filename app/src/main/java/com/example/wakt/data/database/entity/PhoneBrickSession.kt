@@ -33,7 +33,11 @@ data class PhoneBrickSession(
     val reminderEnabled: Boolean = false, // Show notification before lock starts
     val reminderMinutesBefore: Int = 15, // Minutes before lock to remind
     val vibrate: Boolean = true, // Vibrate on lock start
-    val canceledUntil: Long? = null // Timestamp until which auto-start is blocked (after emergency cancel)
+    val canceledUntil: Long? = null, // Timestamp until which auto-start is blocked (after emergency cancel)
+    // Lock feature - prevents editing/deleting for a set duration
+    val isLocked: Boolean = false, // Whether session is currently locked from editing
+    val lockExpiresAt: Long? = null, // Timestamp when lock expires
+    val lockCommitmentPhrase: String? = null // Phrase user must type to unlock early
 )
 
 enum class BrickSessionType {

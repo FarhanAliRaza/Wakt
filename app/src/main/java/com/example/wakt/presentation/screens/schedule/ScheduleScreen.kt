@@ -20,7 +20,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.wakt.data.database.entity.PhoneBrickSession
+import com.example.wakt.presentation.components.LockSessionDialog
+import com.example.wakt.presentation.components.UnlockSessionDialog
 import com.example.wakt.presentation.screens.schedule.components.ScheduleCard
+import kotlinx.coroutines.launch
 import java.util.Calendar
 
 @Composable
@@ -30,6 +33,11 @@ fun ScheduleScreen(
     viewModel: ScheduleViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+
+    // Lock dialog state
+    var scheduleToLock by remember { mutableStateOf<PhoneBrickSession?>(null) }
+    var scheduleToUnlock by remember { mutableStateOf<PhoneBrickSession?>(null) }
+    val coroutineScope = rememberCoroutineScope()
 
     Scaffold(
         floatingActionButton = {
@@ -118,16 +126,51 @@ fun ScheduleScreen(
                         items = schedules,
                         key = { it.id }
                     ) { schedule ->
+                        val isLocked = viewModel.isScheduleLocked(schedule)
                         ScheduleCard(
                             schedule = schedule,
                             onToggle = { active ->
                                 viewModel.toggleScheduleActive(schedule.id, active)
                             },
-                            onClick = { onNavigateToEditSchedule(schedule.id) }
+                            onClick = { onNavigateToEditSchedule(schedule.id) },
+                            isLocked = isLocked,
+                            remainingLockDays = viewModel.getRemainingLockDays(schedule),
+                            onLockClick = { scheduleToLock = schedule },
+                            onUnlockClick = { scheduleToUnlock = schedule }
                         )
                     }
                 }
             }
+        }
+    }
+
+    // Lock schedule dialog
+    scheduleToLock?.let { schedule ->
+        LockSessionDialog(
+            sessionName = schedule.name.ifBlank { "Schedule" },
+            onConfirm = { durationDays, commitmentPhrase ->
+                viewModel.lockSchedule(schedule.id, durationDays, commitmentPhrase)
+                scheduleToLock = null
+            },
+            onDismiss = { scheduleToLock = null }
+        )
+    }
+
+    // Unlock schedule dialog
+    scheduleToUnlock?.let { schedule ->
+        schedule.lockCommitmentPhrase?.let { phrase ->
+            UnlockSessionDialog(
+                sessionName = schedule.name.ifBlank { "Schedule" },
+                requiredPhrase = phrase,
+                remainingDays = viewModel.getRemainingLockDays(schedule) ?: 0,
+                onConfirm = {
+                    coroutineScope.launch {
+                        viewModel.unlockScheduleAsync(schedule.id, phrase)
+                    }
+                    scheduleToUnlock = null
+                },
+                onDismiss = { scheduleToUnlock = null }
+            )
         }
     }
 }

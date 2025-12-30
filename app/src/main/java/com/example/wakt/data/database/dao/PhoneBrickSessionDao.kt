@@ -104,4 +104,34 @@ interface PhoneBrickSessionDao {
         AND targetPackages LIKE '%' || :packageName || '%'
     """)
     suspend fun getActiveAppSchedulesForPackage(packageName: String): List<PhoneBrickSession>
+
+    // Lock a session to prevent editing/deleting
+    @Query("""
+        UPDATE phone_brick_sessions
+        SET isLocked = 1,
+            lockExpiresAt = :expiresAt,
+            lockCommitmentPhrase = :phrase
+        WHERE id = :sessionId
+    """)
+    suspend fun lockSession(sessionId: Long, expiresAt: Long, phrase: String)
+
+    // Unlock a session (early unlock after typing phrase)
+    @Query("""
+        UPDATE phone_brick_sessions
+        SET isLocked = 0,
+            lockExpiresAt = NULL,
+            lockCommitmentPhrase = NULL
+        WHERE id = :sessionId
+    """)
+    suspend fun unlockSession(sessionId: Long)
+
+    // Auto-expire old locks on app startup
+    @Query("""
+        UPDATE phone_brick_sessions
+        SET isLocked = 0,
+            lockExpiresAt = NULL,
+            lockCommitmentPhrase = NULL
+        WHERE isLocked = 1 AND lockExpiresAt IS NOT NULL AND lockExpiresAt < :currentTime
+    """)
+    suspend fun expireOldLocks(currentTime: Long)
 }

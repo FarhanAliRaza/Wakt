@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 data class ScheduleUiState(
@@ -32,7 +33,18 @@ class ScheduleViewModel @Inject constructor(
     val uiState: StateFlow<ScheduleUiState> = _uiState.asStateFlow()
 
     init {
+        checkExpiredLocks()
         loadSchedules()
+    }
+
+    private fun checkExpiredLocks() {
+        viewModelScope.launch {
+            try {
+                phoneBrickSessionDao.expireOldLocks(System.currentTimeMillis())
+            } catch (e: Exception) {
+                // Silent fail - not critical
+            }
+        }
     }
 
     private fun loadSchedules() {
@@ -83,6 +95,46 @@ class ScheduleViewModel @Inject constructor(
         viewModelScope.launch {
             phoneBrickSessionDao.deleteSessionById(scheduleId)
         }
+    }
+
+    // Lock feature methods
+
+    fun lockSchedule(scheduleId: Long, durationDays: Int, commitmentPhrase: String) {
+        viewModelScope.launch {
+            try {
+                val expiresAt = System.currentTimeMillis() + TimeUnit.DAYS.toMillis(durationDays.toLong())
+                phoneBrickSessionDao.lockSession(scheduleId, expiresAt, commitmentPhrase)
+            } catch (e: Exception) {
+                // Handle error silently
+            }
+        }
+    }
+
+    suspend fun unlockScheduleAsync(scheduleId: Long, typedPhrase: String): Boolean {
+        return try {
+            val schedule = phoneBrickSessionDao.getSessionById(scheduleId) ?: return false
+            if (schedule.lockCommitmentPhrase == typedPhrase) {
+                phoneBrickSessionDao.unlockSession(scheduleId)
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun isScheduleLocked(schedule: PhoneBrickSession): Boolean {
+        if (!schedule.isLocked) return false
+        val expiresAt = schedule.lockExpiresAt ?: return false
+        return expiresAt > System.currentTimeMillis()
+    }
+
+    fun getRemainingLockDays(schedule: PhoneBrickSession): Int? {
+        if (!isScheduleLocked(schedule)) return null
+        val expiresAt = schedule.lockExpiresAt ?: return null
+        val remainingMs = expiresAt - System.currentTimeMillis()
+        return TimeUnit.MILLISECONDS.toDays(remainingMs).toInt().coerceAtLeast(1)
     }
 
     private fun calculateNextScheduledLock(schedules: List<PhoneBrickSession>): PhoneBrickSession? {

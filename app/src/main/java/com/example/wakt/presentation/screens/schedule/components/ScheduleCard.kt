@@ -1,7 +1,11 @@
 package com.example.wakt.presentation.screens.schedule.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -10,67 +14,143 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.wakt.data.database.entity.PhoneBrickSession
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun ScheduleCard(
     schedule: PhoneBrickSession,
     onToggle: (Boolean) -> Unit,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    isLocked: Boolean = false,
+    remainingLockDays: Int? = null,
+    onLockClick: (() -> Unit)? = null,
+    onUnlockClick: (() -> Unit)? = null
 ) {
     Card(
-        onClick = onClick,
+        onClick = { if (!isLocked) onClick() },
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(16.dp)
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                // Time range
-                Text(
-                    text = formatTimeRange(schedule),
-                    style = MaterialTheme.typography.headlineSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 24.sp
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    // Time range with lock icon
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = formatTimeRange(schedule),
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 24.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (isLocked) {
+                            Icon(
+                                Icons.Default.Lock,
+                                contentDescription = "Locked",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                // Repeat pattern
-                Text(
-                    text = formatRepeatPattern(schedule.activeDaysOfWeek),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                // Name if exists
-                if (schedule.name.isNotBlank() && schedule.name != "Schedule") {
-                    Spacer(modifier = Modifier.height(2.dp))
+                    // Repeat pattern
                     Text(
-                        text = schedule.name,
-                        style = MaterialTheme.typography.bodySmall,
+                        text = formatRepeatPattern(schedule.activeDaysOfWeek),
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    // Name if exists
+                    if (schedule.name.isNotBlank() && schedule.name != "Schedule") {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = schedule.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // Lock status
+                    if (isLocked && remainingLockDays != null) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        val expiryDate = schedule.lockExpiresAt?.let {
+                            SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(it))
+                        } ?: ""
+                        Text(
+                            text = "Locked until $expiryDate ($remainingLockDays days)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
+
+                Switch(
+                    checked = schedule.isActive,
+                    onCheckedChange = { if (!isLocked) onToggle(it) },
+                    enabled = !isLocked,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.primary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
+                    )
+                )
             }
 
-            Switch(
-                checked = schedule.isActive,
-                onCheckedChange = onToggle,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.primary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            )
+            // Lock/Unlock buttons
+            if (onLockClick != null || onUnlockClick != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (isLocked && onUnlockClick != null) {
+                    OutlinedButton(
+                        onClick = onUnlockClick,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(
+                            Icons.Outlined.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Unlock Early")
+                    }
+                } else if (!isLocked && onLockClick != null) {
+                    OutlinedButton(
+                        onClick = onLockClick,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            Icons.Default.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Lock Schedule")
+                    }
+                }
+            }
         }
     }
 }
