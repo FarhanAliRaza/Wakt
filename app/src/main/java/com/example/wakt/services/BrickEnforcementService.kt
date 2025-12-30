@@ -8,9 +8,6 @@ import android.os.IBinder
 import android.util.Log
 import android.content.pm.ServiceInfo
 import androidx.core.app.NotificationCompat
-import com.example.wakt.R
-import com.example.wakt.presentation.activities.BrickLauncherActivity
-import com.example.wakt.presentation.activities.EmergencyOverrideActivity
 import com.example.wakt.utils.BrickSessionManager
 import com.example.wakt.utils.EssentialAppsManager
 import dagger.hilt.android.AndroidEntryPoint
@@ -111,28 +108,15 @@ class BrickEnforcementService : Service() {
     }
     
     private fun createNotification(): Notification {
-        // Create intent that opens BrickLauncher when notification is tapped
-        val notificationIntent = Intent(this, BrickLauncherActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent, 
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        
-        val currentSession = brickSessionManager.getCurrentSession()
-        val sessionName = currentSession?.name ?: "Focus Mode"
-        val timeText = formatRemainingTime()
-        
+        // Minimal notification required for foreground service
+        // Won't display without POST_NOTIFICATIONS permission
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🔒 $sessionName")
-            .setContentText(timeText)
-            .setSmallIcon(android.R.drawable.ic_lock_lock) // Lock icon
-            .setOngoing(true) // Can't be swiped away
-            .setAutoCancel(false) // Don't remove when tapped
-            .setPriority(NotificationCompat.PRIORITY_HIGH) // High priority for persistence
+            .setContentTitle("Focus Mode Active")
+            .setContentText("Session in progress")
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setContentIntent(pendingIntent)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
     
@@ -155,7 +139,6 @@ class BrickEnforcementService : Service() {
                 Log.e(TAG, "Error dumping essential apps", e)
             }
 
-            var notificationUpdateCounter = 0
             var lastCheckedApp: String? = null
             var lastAllowedState: Boolean? = null
 
@@ -186,7 +169,6 @@ class BrickEnforcementService : Service() {
                             }
                         }
                         delay(ENFORCEMENT_INTERVAL_MS)
-                        notificationUpdateCounter++
                         continue
                     }
 
@@ -195,7 +177,6 @@ class BrickEnforcementService : Service() {
                     // Skip if app hasn't changed
                     if (foregroundApp == lastCheckedApp && lastAllowedState != null) {
                         delay(ENFORCEMENT_INTERVAL_MS)
-                        notificationUpdateCounter++
                         continue
                     }
 
@@ -210,7 +191,6 @@ class BrickEnforcementService : Service() {
                             BrickOverlayService.hideOverlay()
                         }
                         delay(ENFORCEMENT_INTERVAL_MS)
-                        notificationUpdateCounter++
                         continue
                     }
 
@@ -237,18 +217,6 @@ class BrickEnforcementService : Service() {
                         // DO NOT hide overlay here - only the overlay itself can hide
                     }
 
-                    // Update notification every 20 iterations (30 seconds)
-                    notificationUpdateCounter++
-                    if (notificationUpdateCounter >= 20) {
-                        try {
-                            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                            notificationManager.notify(NOTIFICATION_ID, createNotification())
-                            notificationUpdateCounter = 0
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error updating notification", e)
-                        }
-                    }
-
                     delay(ENFORCEMENT_INTERVAL_MS)
 
                 } catch (e: Exception) {
@@ -256,27 +224,6 @@ class BrickEnforcementService : Service() {
                     delay(ENFORCEMENT_INTERVAL_MS)
                 }
             }
-        }
-    }
-    
-    
-    private fun formatRemainingTime(): String {
-        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
-        val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes() ?: 0
-
-        return when {
-            remainingMinutes >= 60 -> {
-                val hours = remainingMinutes / 60
-                val mins = remainingMinutes % 60
-                if (mins > 0) "${hours}h ${mins}m remaining" else "${hours}h remaining"
-            }
-            remainingMinutes > 1 -> "${remainingMinutes}m remaining"
-            remainingMinutes == 1 -> {
-                val seconds = remainingSeconds % 60
-                if (seconds > 0) "${remainingMinutes}m ${seconds}s remaining" else "1m remaining"
-            }
-            remainingSeconds > 0 -> "${remainingSeconds}s remaining"
-            else -> "Ending now"
         }
     }
 

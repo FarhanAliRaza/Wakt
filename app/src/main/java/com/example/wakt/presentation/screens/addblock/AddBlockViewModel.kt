@@ -182,17 +182,10 @@ class AddBlockViewModel @Inject constructor(
         viewModelScope.launch {
             val state = _uiState.value
 
-            // Get global challenge settings
-            val challengeType = globalSettingsManager.getChallengeType()
-            val waitTimeMinutes = globalSettingsManager.getWaitTimeMinutes()
+            // Get global challenge settings - now only CLICK_500 is used
             val clickCount = globalSettingsManager.getClickCount()
-
-            // Determine challenge data based on type
-            val challengeData = when (challengeType) {
-                ChallengeType.WAIT -> waitTimeMinutes.toString()
-                ChallengeType.CLICK_500 -> clickCount.toString()
-                else -> ""
-            }
+            val challengeType = ChallengeType.CLICK_500
+            val challengeData = clickCount.toString()
 
             // Save selected apps
             state.selectedApps.forEach { packageName ->

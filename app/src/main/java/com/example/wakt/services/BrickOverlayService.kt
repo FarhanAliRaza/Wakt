@@ -248,41 +248,16 @@ class BrickOverlayService : Service() {
     }
 
     private fun createNotification(): Notification {
-        val currentSession = brickSessionManager.getCurrentSession()
-        val sessionName = currentSession?.name ?: "Focus Mode"
-        val timeText = formatRemainingTime()
-
+        // Minimal notification required for foreground service
+        // Won't display without POST_NOTIFICATIONS permission
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🔒 $sessionName")
-            .setContentText(timeText)
+            .setContentTitle("Focus Mode Active")
+            .setContentText("Session in progress")
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setOngoing(true)
-            .setAutoCancel(false)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
-    }
-
-    private fun formatRemainingTime(): String {
-        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
-        val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes() ?: 0
-
-        return when {
-            remainingMinutes >= 60 -> {
-                val hours = remainingMinutes / 60
-                val mins = remainingMinutes % 60
-                if (mins > 0) "${hours}h ${mins}m remaining" else "${hours}h remaining"
-            }
-            remainingMinutes > 1 -> "${remainingMinutes}m remaining"
-            remainingMinutes == 1 -> {
-                val seconds = remainingSeconds % 60
-                if (seconds > 0) "${remainingMinutes}m ${seconds}s remaining" else "1m remaining"
-            }
-            remainingSeconds > 0 -> "${remainingSeconds}s remaining"
-            else -> "Ending now"
-        }
     }
 
     private fun showOverlay() {
@@ -296,7 +271,6 @@ class BrickOverlayService : Service() {
         if (!Settings.canDrawOverlays(this)) {
             Log.e(TAG, "CRITICAL: Overlay permission not granted - cannot show overlay")
             Log.e(TAG, "User must grant 'Display over other apps' permission in Settings")
-            showPermissionNeededNotification()
             return
         }
 
@@ -492,6 +466,9 @@ class BrickOverlayService : Service() {
 
         // Emergency exit button - only show if session allows emergency override
         if (currentSession?.allowEmergencyOverride == true) {
+            val isEmergencyEnabled = globalSettingsManager.isEmergencyExitEnabled()
+            val buttonColor = if (isEmergencyEnabled) "#FFEF4444" else "#FF6B7280" // Red or Grey
+
             val emergencyButton = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER
@@ -502,19 +479,22 @@ class BrickOverlayService : Service() {
                     topMargin = dpToPx(24)
                 }
                 setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12))
-                isClickable = true
-                isFocusable = true
+                isClickable = isEmergencyEnabled
+                isFocusable = isEmergencyEnabled
+                alpha = if (isEmergencyEnabled) 1.0f else 0.5f
 
                 // Rounded border background (outlined button style)
                 val buttonBackground = android.graphics.drawable.GradientDrawable().apply {
                     setColor(android.graphics.Color.TRANSPARENT)
-                    setStroke(dpToPx(1), android.graphics.Color.parseColor("#FFEF4444")) // Red border
+                    setStroke(dpToPx(1), android.graphics.Color.parseColor(buttonColor))
                     cornerRadius = dpToPx(8).toFloat()
                 }
                 background = buttonBackground
 
-                setOnClickListener {
-                    launchEmergencyOverride()
+                if (isEmergencyEnabled) {
+                    setOnClickListener {
+                        launchEmergencyOverride()
+                    }
                 }
             }
 
@@ -532,9 +512,9 @@ class BrickOverlayService : Service() {
             emergencyButton.addView(warningIcon)
 
             val emergencyText = TextView(this).apply {
-                text = "Emergency Exit"
+                text = if (isEmergencyEnabled) "Emergency Exit" else "Emergency Exit (Disabled)"
                 textSize = 14f
-                setTextColor(android.graphics.Color.parseColor("#FFEF4444")) // Red text
+                setTextColor(android.graphics.Color.parseColor(buttonColor))
                 typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
                 layoutParams = LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -803,24 +783,13 @@ class BrickOverlayService : Service() {
         }
     }
 
-    @android.annotation.SuppressLint("NotificationPermission")
     private fun startOverlayUpdateLoop() {
         updateJob?.cancel()
         updateJob = serviceScope.launch {
-            var notificationUpdateCounter = 0
             while (isActive && isOverlayShowing) {
                 try {
                     // Update timer display every second
                     updateTimerDisplay()
-
-                    // Update notification every 30 seconds
-                    notificationUpdateCounter++
-                    if (notificationUpdateCounter >= 30) {
-                        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                        notificationManager.notify(NOTIFICATION_ID, createNotification())
-                        notificationUpdateCounter = 0
-                    }
-
                     delay(1_000) // Update every second
                 } catch (e: Exception) {
                     Log.e(TAG, "Error updating overlay", e)
@@ -1150,42 +1119,6 @@ class BrickOverlayService : Service() {
         emergencyClicksRemaining = 0
         Log.d(TAG, "Emergency mode cancelled")
         rebuildOverlayContent()
-    }
-
-    @android.annotation.SuppressLint("NotificationPermission")
-    private fun showPermissionNeededNotification() {
-        try {
-            // Create intent to open overlay permission settings
-            val permissionIntent = Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                android.net.Uri.parse("package:${packageName}")
-            ).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-
-            val pendingIntent = PendingIntent.getActivity(
-                this, 0, permissionIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("⚠️ Permission Required")
-                .setContentText("Grant 'Display over other apps' permission to activate focus mode")
-                .setSmallIcon(android.R.drawable.ic_dialog_alert)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setAutoCancel(true)
-                .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setContentIntent(pendingIntent)
-                .build()
-
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.notify(NOTIFICATION_ID + 1, notification)
-
-            Log.d(TAG, "Shown permission needed notification")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error showing permission notification", e)
-        }
     }
 
     /**

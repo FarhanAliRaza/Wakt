@@ -1055,7 +1055,7 @@ class AppBlockingService : AccessibilityService() {
             val currentSession = brickSessionManager.getCurrentSession()
             if (currentSession == null) {
                 Log.w(TAG, "No active brick session found, blocking app as precaution: $packageName")
-                blockNonEssentialAppWithNotification(packageName)
+                blockNonEssentialApp(packageName)
                 return
             }
 
@@ -1104,22 +1104,22 @@ class AppBlockingService : AccessibilityService() {
                     brickSessionManager.logEssentialAppAccess(packageName)
                 }
             } else {
-                // Not essential and not allowed - block it with notification
+                // Not essential and not allowed - block it
                 Log.d(TAG, "BLOCKING non-essential, non-allowed app during brick session: $packageName")
-                blockNonEssentialAppWithNotification(packageName)
+                blockNonEssentialApp(packageName)
             }
 
         } catch (e: Exception) {
             Log.e(TAG, "Error in brick enforcement", e)
             // Even on error, block the app (safer default)
-            blockNonEssentialAppWithNotification(packageName)
+            blockNonEssentialApp(packageName)
         }
     }
     
     /**
-     * Block a non-essential app during brick mode using notification
+     * Block a non-essential app during brick mode
      */
-    private fun blockNonEssentialAppWithNotification(packageName: String) {
+    private fun blockNonEssentialApp(packageName: String) {
         Log.d(TAG, "BLOCKING non-essential app during brick session: $packageName")
 
         try {
@@ -1127,94 +1127,14 @@ class AppBlockingService : AccessibilityService() {
             // No need to press BACK or do anything else - overlay covers everything
             BrickOverlayService.requestShowOverlay(this)
 
-            // Get app name for notification
-            val appName = try {
-                val appInfo = packageManager.getApplicationInfo(packageName, 0)
-                packageManager.getApplicationLabel(appInfo).toString()
-            } catch (e: Exception) {
-                packageName
-            }
-
-            // Show notification for awareness
-            showBrickModeViolationNotification(appName)
-
             // Log bypass attempt asynchronously
             serviceScope.launch {
                 brickSessionManager.logBypassAttempt()
             }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error blocking non-essential app with notification", e)
-            // Just log the error - overlay should handle blocking
-        }
-    }
-    
-    /**
-     * Show a notification when user tries to access blocked app during brick mode
-     */
-    @android.annotation.SuppressLint("NotificationPermission")
-    private fun showBrickModeViolationNotification(appName: String) {
-        try {
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            
-            // Create notification channel for brick violations
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    "brick_violation_channel",
-                    "Focus Mode Violations",
-                    NotificationManager.IMPORTANCE_DEFAULT
-                ).apply {
-                    description = "Notifications when trying to access blocked apps during focus mode"
-                    enableVibration(false) // Less intrusive
-                    setShowBadge(false)
-                }
-                notificationManager.createNotificationChannel(channel)
-            }
-            
-            // Get session info for better context
-            val currentSession = brickSessionManager.getCurrentSession()
-            val sessionName = currentSession?.name ?: "Focus Mode"
-            val timeText = formatRemainingTimeShort()
-            
-            // Create notification
-            val notification = NotificationCompat.Builder(this, "brick_violation_channel")
-                .setContentTitle("🔒 $sessionName Active")
-                .setContentText("$appName blocked • $timeText")
-                .setSmallIcon(android.R.drawable.ic_lock_lock)
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                .setAutoCancel(true)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setTimeoutAfter(3000) // Auto-dismiss after 3 seconds
-                .build()
-                
-            // Show notification with unique ID based on app name (check permission for Android 13+)
-            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
-                checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                notificationManager.notify(appName.hashCode(), notification)
-            }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error showing brick mode violation notification", e)
-        }
-    }
-    
-    private fun formatRemainingTimeShort(): String {
-        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
-        val remainingMinutes = brickSessionManager.getCurrentSessionRemainingMinutes() ?: 0
 
-        return when {
-            remainingMinutes >= 60 -> {
-                val hours = remainingMinutes / 60
-                val mins = remainingMinutes % 60
-                if (mins > 0) "${hours}h ${mins}m left" else "${hours}h left"
-            }
-            remainingMinutes > 1 -> "${remainingMinutes}m left"
-            remainingMinutes == 1 -> {
-                val seconds = remainingSeconds % 60
-                if (seconds > 0) "${remainingMinutes}m ${seconds}s left" else "1m left"
-            }
-            remainingSeconds > 0 -> "${remainingSeconds}s left"
-            else -> "Ending now"
+        } catch (e: Exception) {
+            Log.e(TAG, "Error blocking non-essential app", e)
+            // Just log the error - overlay should handle blocking
         }
     }
 

@@ -1,17 +1,13 @@
 package com.example.wakt.utils
 
-import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityManager
-import androidx.core.content.ContextCompat
 import com.example.wakt.services.AppBlockingService
 
 object PermissionHelper {
@@ -118,47 +114,10 @@ object PermissionHelper {
         }
     }
 
-    /**
-     * Check if notification permission is granted (required for Android 13+)
-     */
-    fun isNotificationPermissionGranted(context: Context): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(
-                context,
-                Manifest.permission.POST_NOTIFICATIONS
-            ) == PackageManager.PERMISSION_GRANTED
-        } else {
-            // Below Android 13, notification permission is granted by default
-            true
-        }
-    }
-
-    /**
-     * Open app notification settings
-     */
-    fun requestNotificationPermission(context: Context) {
-        try {
-            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                }
-            } else {
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.parse("package:${context.packageName}")
-                }
-            }
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            Log.e("PermissionHelper", "Failed to open notification settings", e)
-        }
-    }
-
     fun areAllPermissionsGranted(context: Context): Boolean {
         return isAccessibilityServiceEnabled(context) &&
                canDrawOverOtherApps(context) &&
-               isUsageAccessGranted(context) &&
-               isNotificationPermissionGranted(context)
+               isUsageAccessGranted(context)
     }
 
     fun getMissingPermissions(context: Context): List<String> {
@@ -174,10 +133,6 @@ object PermissionHelper {
 
         if (!isUsageAccessGranted(context)) {
             missing.add("Usage Access")
-        }
-
-        if (!isNotificationPermissionGranted(context)) {
-            missing.add("Notifications")
         }
 
         return missing
