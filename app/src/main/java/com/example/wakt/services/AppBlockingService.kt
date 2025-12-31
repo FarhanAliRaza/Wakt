@@ -965,35 +965,88 @@ class AppBlockingService : AccessibilityService() {
         }
     }
     
+    /**
+     * Periodic polling fallback for MIUI and other devices that throttle accessibility events.
+     * This ensures blocking works even when TYPE_WINDOW_STATE_CHANGED events are suppressed.
+     */
     private fun startPeriodicAppMonitoring() {
         monitoringJob?.cancel()
         monitoringJob = serviceScope.launch {
             while (isActive) {
                 delay(2000) // Check every 2 seconds
-                
-                // Check if any blocked app is currently in foreground
-                val currentPackage = getCurrentForegroundPackage()
-                if (currentPackage != null && activeBlockedApps.contains(currentPackage)) {
-                    Log.d(TAG, "Blocked app $currentPackage detected in periodic check")
-                    checkIfAppIsBlocked(currentPackage, forceCheck = true)
-                }
-                
-                // Clean up old entries from activeBlockedApps
-                val currentTime = System.currentTimeMillis()
-                activeBlockedApps.removeIf { pkg ->
-                    val lastBlockTime = blockedAppCooldown[pkg] ?: 0
-                    currentTime - lastBlockTime > 60000 // Remove after 1 minute
+
+                try {
+                    // CRITICAL FIX FOR MIUI: Proactively check ANY foreground app,
+                    // not just apps already in activeBlockedApps.
+                    // On MIUI, accessibility events may be throttled/suppressed, so the app
+                    // may never be added to activeBlockedApps via event handlers.
+                    val currentPackage = getCurrentForegroundPackage()
+
+                    if (currentPackage != null) {
+                        // Skip system apps and our own app
+                        if (currentPackage == applicationContext.packageName) {
+                            continue
+                        }
+
+                        // Skip system launchers (user is on home screen)
+                        if (isSystemLauncher(currentPackage)) {
+                            continue
+                        }
+
+                        // Skip SystemUI
+                        if (currentPackage == "com.android.systemui") {
+                            continue
+                        }
+
+                        // Update lastKnownForegroundPackage for other services to use
+                        // (in case accessibility events aren't firing on MIUI)
+                        updateLastForegroundPackage(currentPackage)
+
+                        // Check brick mode first (higher priority)
+                        if (brickSessionManager.isPhoneBricked()) {
+                            Log.d(TAG, "Periodic check during brick mode: $currentPackage")
+                            handleBrickedPhoneAccess(currentPackage)
+                        } else {
+                            // PROACTIVE CHECK: Check this app against block list
+                            // even if we haven't seen it via accessibility events.
+                            // This is the key fix for MIUI devices.
+                            Log.d(TAG, "Periodic polling check for: $currentPackage")
+                            checkIfAppIsBlocked(currentPackage, forceCheck = false)
+                        }
+                    }
+
+                    // Clean up old entries from activeBlockedApps
+                    val currentTime = System.currentTimeMillis()
+                    activeBlockedApps.removeIf { pkg ->
+                        val lastBlockTime = blockedAppCooldown[pkg] ?: 0
+                        currentTime - lastBlockTime > 60000 // Remove after 1 minute
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in periodic app monitoring", e)
                 }
             }
         }
     }
     
+    /**
+     * Get current foreground package with fallback chain.
+     * Uses the same reliable method as BrickEnforcementService for MIUI compatibility.
+     */
     private fun getCurrentForegroundPackage(): String? {
         return try {
-            rootInActiveWindow?.packageName?.toString()
+            // First try rootInActiveWindow (fastest, direct query)
+            val directPackage = rootInActiveWindow?.packageName?.toString()
+            if (!directPackage.isNullOrBlank()) {
+                return directPackage
+            }
+
+            // Fallback to getForegroundPackageReliably which includes UsageStatsManager
+            // This is critical for MIUI devices where accessibility may be throttled
+            getForegroundPackageReliably()
         } catch (e: Exception) {
             Log.e(TAG, "Error getting current foreground package", e)
-            null
+            // Last resort: try UsageStatsManager directly
+            getForegroundPackageReliably()
         }
     }
     
