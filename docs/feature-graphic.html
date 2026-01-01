@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a1a;
+        }
+        .feature-graphic {
+            width: 1024px;
+            height: 500px;
+            background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0F172A 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Decorative circles */
+        .circle {
+            position: absolute;
+            border-radius: 50%;
+            opacity: 0.1;
+        }
+        .circle-1 {
+            width: 600px;
+            height: 600px;
+            background: #3B82F6;
+            top: -200px;
+            right: -100px;
+        }
+        .circle-2 {
+            width: 400px;
+            height: 400px;
+            background: #3B82F6;
+            bottom: -150px;
+            left: -100px;
+        }
+        .circle-3 {
+            width: 200px;
+            height: 200px;
+            background: #60A5FA;
+            top: 50%;
+            left: 20%;
+            opacity: 0.05;
+        }
+
+        .content {
+            display: flex;
+            align-items: center;
+            gap: 60px;
+            z-index: 1;
+            padding: 0 80px;
+        }
+
+        .logo-section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .logo {
+            width: 140px;
+            height: 140px;
+            border-radius: 32px;
+            overflow: hidden;
+            box-shadow: 0 20px 40px rgba(59, 130, 246, 0.3);
+        }
+
+        .logo img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .app-name {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 48px;
+            font-weight: 700;
+            color: #F1F5F9;
+            letter-spacing: -1px;
+        }
+
+        .text-section {
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        .tagline {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 42px;
+            font-weight: 700;
+            color: #F1F5F9;
+            line-height: 1.2;
+        }
+
+        .tagline span {
+            color: #3B82F6;
+        }
+
+        .features {
+            display: flex;
+            gap: 32px;
+        }
+
+        .feature {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 18px;
+            color: #94A3B8;
+        }
+
+        .feature svg {
+            width: 24px;
+            height: 24px;
+            fill: #3B82F6;
+        }
+
+        .badges {
+            display: flex;
+            gap: 16px;
+            margin-top: 8px;
+        }
+
+        .badge {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-size: 14px;
+            color: #60A5FA;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+    <div class="feature-graphic">
+        <div class="circle circle-1"></div>
+        <div class="circle circle-2"></div>
+        <div class="circle circle-3"></div>
+
+        <div class="content">
+            <div class="logo-section">
+                <div class="logo">
+                    <img src="../logo-app.png" alt="Wakt Logo">
+                </div>
+                <div class="app-name">Wakt</div>
+            </div>
+
+            <div class="text-section">
+                <div class="tagline">
+                    Take Back Control<br>
+                    of Your <span>Screen Time</span>
+                </div>
+
+                <div class="features">
+                    <div class="feature">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                            <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14zm-4.2-5.78v1.75l3.2-2.99L12.8 9v1.7c-3.11.43-4.35 2.56-4.8 4.7 1.11-1.5 2.58-2.18 4.8-2.18z"/>
+                        </svg>
+                        Block Apps
+                    </div>
+                    <div class="feature">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                        </svg>
+                        Block Sites
+                    </div>
+                    <div class="feature">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                            <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"/>
+                        </svg>
+                        Brick Phone
+                    </div>
+                </div>
+
+                <div class="badges">
+                    <div class="badge">Free & Open Source</div>
+                    <div class="badge">No Ads</div>
+                    <div class="badge">Privacy First</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

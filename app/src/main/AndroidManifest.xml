@@ -5,10 +5,12 @@
     <!-- Permission to query all installed packages on Android 11+ (required for app blocker functionality) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Permissions for accessibility service and overlay -->
+    <!-- Permission for accessibility service (overlay uses TYPE_ACCESSIBILITY_OVERLAY - no separate permission needed) -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" tools:ignore="ProtectedPermissions" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+
+    <!-- Permission to request battery optimization exemption (prevents service from being killed) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     
     <!-- Permissions for emergency calling -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
@@ -65,7 +67,7 @@
             android:exported="false"
             android:theme="@style/Theme.Wakt"
             android:launchMode="singleInstance"
-            android:taskAffinity="com.example.wakt.brick"
+            android:taskAffinity="com.farhanaliraza.wakt.brick"
             android:excludeFromRecents="true"
             android:screenOrientation="portrait"
             android:stateNotNeeded="true"
