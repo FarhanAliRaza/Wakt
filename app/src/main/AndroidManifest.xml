@@ -11,6 +11,12 @@
 
     <!-- Permission to request battery optimization exemption (prevents service from being killed) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!-- Permission to post notifications (required on Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Permission to start on boot (for service persistence) -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     
     <!-- Permissions for emergency calling -->
     <uses-permission android:name="android.permission.CALL_PHONE" />
@@ -152,6 +158,18 @@
                 android:value="Website blocking VPN service" />
         </service>
         -->
+
+        <!-- Boot receiver to restart services after device reboot -->
+        <receiver
+            android:name=".services.BootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

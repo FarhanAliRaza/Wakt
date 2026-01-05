@@ -1,6 +1,7 @@
 package com.farhanaliraza.wakt.presentation.components
 
 import android.content.Context
+import android.os.Build
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -75,7 +76,10 @@ fun PermissionDialog(
 ) {
     val needsAccessibility = missingPermissions.contains("Accessibility Service")
     val needsBatteryOptimization = !PermissionHelper.isBatteryOptimizationDisabled(context)
+    val needsNotificationPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !PermissionHelper.isNotificationPermissionGranted(context)
     val isAggressiveOem = PermissionHelper.isAggressiveBatteryOem()
+    val isMiuiDevice = PermissionHelper.isMiuiDevice()
     val oemInstructions = PermissionHelper.getOemBatteryInstructions()
     val hasOemSettings = PermissionHelper.getOemBatterySettingsIntent(context) != null
 
@@ -99,6 +103,20 @@ fun PermissionDialog(
                         )
                         Text(
                             text = "Used to detect which app is running, block distracting apps, and show the lock overlay. No personal data is collected.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (needsNotificationPermission) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "• Notification Permission",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "Required on Android 13+ for the app to run in the background and show service notifications.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -131,6 +149,41 @@ fun PermissionDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+                }
+
+                // MIUI-specific instructions
+                if (isMiuiDevice) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "⚠️ Xiaomi/MIUI Device Detected",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Text(
+                            text = "MIUI has aggressive battery management. Please complete these additional steps:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Text(
+                            text = "1. Enable Autostart: Security → Autostart → Enable Wakt",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "2. Lock in Recents: Open Wakt → Open Recent Apps → Long press Wakt → Tap lock icon",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "3. Set Battery Saver to 'No restrictions'",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
@@ -180,6 +233,17 @@ fun PermissionDialog(
                     }
                 }
 
+                if (needsNotificationPermission) {
+                    OutlinedButton(
+                        onClick = {
+                            PermissionHelper.openNotificationSettings(context)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Allow Notifications")
+                    }
+                }
+
                 if (needsBatteryOptimization) {
                     OutlinedButton(
                         onClick = {
@@ -199,6 +263,21 @@ fun PermissionDialog(
                         ) {
                             Text("Open Device Battery Settings")
                         }
+                    }
+                }
+
+                // MIUI-specific button
+                if (isMiuiDevice) {
+                    OutlinedButton(
+                        onClick = {
+                            PermissionHelper.openMiuiAutostartSettings(context)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Text("Open MIUI Autostart Settings")
                     }
                 }
             }

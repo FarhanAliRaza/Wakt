@@ -1,16 +1,20 @@
 package com.farhanaliraza.wakt.utils
 
+import android.Manifest
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AppOpsManager
+import android.app.NotificationManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityManager
+import androidx.core.content.ContextCompat
 import com.farhanaliraza.wakt.services.AppBlockingService
 
 /**
@@ -277,5 +281,244 @@ object PermissionHelper {
             "meizu" -> "Settings → Apps → Wakt → Permissions → Background running"
             else -> "Settings → Apps → Wakt → Battery → Unrestricted (or similar)"
         }
+    }
+
+    // ============== NOTIFICATION PERMISSION (Android 13+) ==============
+
+    /**
+     * Check if notification permission is granted.
+     * Required on Android 13+ for foreground service notifications.
+     */
+    fun isNotificationPermissionGranted(context: Context): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            // Before Android 13, notifications are allowed by default
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            notificationManager?.areNotificationsEnabled() ?: true
+        }
+    }
+
+    /**
+     * Open notification settings
+     */
+    fun openNotificationSettings(context: Context) {
+        try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                }
+            } else {
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+            }
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e("PermissionHelper", "Error opening notification settings", e)
+        }
+    }
+
+    // ============== MIUI/XIAOMI SPECIFIC ==============
+
+    /**
+     * Check if device is running MIUI
+     */
+    fun isMiuiDevice(): Boolean {
+        return try {
+            val clazz = Class.forName("android.os.SystemProperties")
+            val method = clazz.getMethod("get", String::class.java)
+            val miuiVersion = method.invoke(null, "ro.miui.ui.version.name") as? String
+            !miuiVersion.isNullOrEmpty()
+        } catch (e: Exception) {
+            // Fallback to manufacturer check
+            getDeviceManufacturer() in listOf("xiaomi", "redmi", "poco")
+        }
+    }
+
+    /**
+     * Get MIUI version if available
+     */
+    fun getMiuiVersion(): String? {
+        return try {
+            val clazz = Class.forName("android.os.SystemProperties")
+            val method = clazz.getMethod("get", String::class.java)
+            method.invoke(null, "ro.miui.ui.version.name") as? String
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Try to open MIUI autostart settings
+     */
+    fun openMiuiAutostartSettings(context: Context): Boolean {
+        val intents = listOf(
+            // MIUI 13/14 autostart manager
+            Intent().setComponent(ComponentName(
+                "com.miui.securitycenter",
+                "com.miui.permcenter.autostart.AutoStartManagementActivity"
+            )),
+            // Alternative path
+            Intent().setComponent(ComponentName(
+                "com.miui.securitycenter",
+                "com.miui.permcenter.autostart.AutoStartDetailManagementActivity"
+            )),
+            // Older MIUI versions
+            Intent().setComponent(ComponentName(
+                "com.miui.permcenter",
+                "com.miui.permcenter.autostart.AutoStartManagementActivity"
+            ))
+        )
+
+        for (intent in intents) {
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            if (intent.resolveActivity(context.packageManager) != null) {
+                try {
+                    context.startActivity(intent)
+                    return true
+                } catch (e: Exception) {
+                    Log.e("PermissionHelper", "Error opening MIUI autostart", e)
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Try to open MIUI battery saver settings for the app
+     */
+    fun openMiuiBatterySettings(context: Context): Boolean {
+        val intents = listOf(
+            // Direct app battery settings
+            Intent().apply {
+                component = ComponentName(
+                    "com.miui.powerkeeper",
+                    "com.miui.powerkeeper.ui.HiddenAppsConfigActivity"
+                )
+                putExtra("package_name", context.packageName)
+                putExtra("package_label", "Wakt")
+            },
+            // General power settings
+            Intent().setComponent(ComponentName(
+                "com.miui.powerkeeper",
+                "com.miui.powerkeeper.ui.HiddenAppsContainerManagementActivity"
+            ))
+        )
+
+        for (intent in intents) {
+            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            if (intent.resolveActivity(context.packageManager) != null) {
+                try {
+                    context.startActivity(intent)
+                    return true
+                } catch (e: Exception) {
+                    Log.e("PermissionHelper", "Error opening MIUI battery settings", e)
+                }
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Get comprehensive MIUI setup instructions
+     */
+    fun getMiuiSetupInstructions(): List<String> {
+        return listOf(
+            "1. Enable Autostart:\n   Security → Autostart → Enable Wakt",
+            "2. Disable Battery Restrictions:\n   Settings → Apps → Wakt → Battery saver → No restrictions",
+            "3. Lock App in Recents:\n   Open Wakt → Open Recent Apps → Long press Wakt → Tap lock icon",
+            "4. Disable MIUI Optimizations:\n   Settings → Additional settings → Developer options → MIUI optimization → Off",
+            "5. Keep Accessibility Service:\n   Settings → Additional settings → Accessibility → Wakt → Enabled"
+        )
+    }
+
+    /**
+     * Get all required permissions that need attention on aggressive OEMs
+     */
+    fun getOemPermissionChecklist(context: Context): List<PermissionStatus> {
+        val checklist = mutableListOf<PermissionStatus>()
+
+        // Accessibility Service - always required
+        checklist.add(PermissionStatus(
+            name = "Accessibility Service",
+            isGranted = isAccessibilityServiceEnabled(context),
+            importance = PermissionImportance.CRITICAL,
+            instructions = "Enable in Settings → Accessibility → Wakt"
+        ))
+
+        // Battery Optimization
+        checklist.add(PermissionStatus(
+            name = "Battery Optimization Disabled",
+            isGranted = isBatteryOptimizationDisabled(context),
+            importance = PermissionImportance.HIGH,
+            instructions = getOemBatteryInstructions()
+        ))
+
+        // Notification Permission (Android 13+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            checklist.add(PermissionStatus(
+                name = "Notification Permission",
+                isGranted = isNotificationPermissionGranted(context),
+                importance = PermissionImportance.HIGH,
+                instructions = "Allow notifications for service indicators"
+            ))
+        }
+
+        // MIUI-specific: Autostart
+        if (isMiuiDevice()) {
+            checklist.add(PermissionStatus(
+                name = "Autostart Permission (MIUI)",
+                isGranted = null, // Can't check programmatically
+                importance = PermissionImportance.CRITICAL,
+                instructions = "Security → Autostart → Enable Wakt"
+            ))
+
+            checklist.add(PermissionStatus(
+                name = "Lock in Recent Apps (MIUI)",
+                isGranted = null, // Can't check programmatically
+                importance = PermissionImportance.HIGH,
+                instructions = "Long press Wakt in recents → Tap lock icon"
+            ))
+        }
+
+        return checklist
+    }
+
+    /**
+     * Check if all critical permissions are granted
+     */
+    fun areAllCriticalPermissionsGranted(context: Context): Boolean {
+        // Accessibility service is always critical
+        if (!isAccessibilityServiceEnabled(context)) return false
+
+        // On Android 13+, notification permission is needed for foreground services
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!isNotificationPermissionGranted(context)) return false
+        }
+
+        return true
+    }
+
+    /**
+     * Data class for permission status
+     */
+    data class PermissionStatus(
+        val name: String,
+        val isGranted: Boolean?, // null if can't be checked programmatically
+        val importance: PermissionImportance,
+        val instructions: String
+    )
+
+    enum class PermissionImportance {
+        CRITICAL,  // App won't work without this
+        HIGH,      // App may malfunction without this
+        MEDIUM     // Recommended but not essential
     }
 }

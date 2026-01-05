@@ -109,6 +109,11 @@ dependencies {
     // Lifecycle
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
+
+    // WorkManager (for service watchdog on aggressive OEMs)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.hilt.android.compiler)
     
     // Testing
     testImplementation(libs.junit)
