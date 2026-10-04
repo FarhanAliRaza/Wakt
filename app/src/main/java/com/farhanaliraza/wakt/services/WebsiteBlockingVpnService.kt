@@ -56,16 +56,6 @@ import kotlinx.coroutines.flow.asStateFlow
  *   SERVFAIL so resolvers fail fast instead of retrying for seconds.
  */
 @AndroidEntryPoint
-/** One DNS query as seen by the filter, for the in-app diagnostics log. */
-data class DnsLogEntry(
-        val timeMillis: Long,
-        val domain: String,
-        val queryType: String,
-        val action: String,
-        val app: String?,
-        val server: String
-)
-
 class WebsiteBlockingVpnService : VpnService() {
 
     @Inject lateinit var blockedItemDao: BlockedItemDao
