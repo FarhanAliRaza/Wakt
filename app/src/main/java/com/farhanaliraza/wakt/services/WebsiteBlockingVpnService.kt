@@ -116,6 +116,10 @@ class WebsiteBlockingVpnService : VpnService() {
         /** Lets ServiceOptimizer avoid spinning up the service just to deliver a stop action. */
         @Volatile var isServiceRunning = false
             private set
+
+        /** Diagnostics shown in the UI: DNS queries seen by the filter and how many were blocked. */
+        val queriesSeen = AtomicInteger(0)
+        val queriesBlocked = AtomicInteger(0)
     }
 
     override fun onCreate() {
@@ -288,12 +292,22 @@ class WebsiteBlockingVpnService : VpnService() {
         }
     }
 
+    /**
+     * Reduces whatever the user typed ("https://www.facebook.com/", "m.facebook.com")
+     * to a bare parent domain ("facebook.com"), so the block covers every subdomain.
+     * The "m." (mobile) and "www." prefixes are stripped because browsers pick
+     * between them freely and blocking just one of them blocks nothing in practice.
+     */
     private fun cleanDomain(url: String): String {
-        return url.lowercase()
+        return url.trim()
+                .lowercase()
                 .removePrefix("http://")
                 .removePrefix("https://")
-                .removePrefix("www.")
                 .split("/")[0] // Take only domain part
+                .split(":")[0] // Drop any port
+                .removePrefix("www.")
+                .removePrefix("m.")
+                .trimEnd('.')
     }
 
     /**
@@ -435,9 +449,11 @@ class WebsiteBlockingVpnService : VpnService() {
 
         val question = extractQuestion(dnsPayload)
         val domain = question?.first
+        queriesSeen.incrementAndGet()
 
         // 1. Blocked domain: answer NXDOMAIN immediately, nothing goes upstream
         if (domain != null && isDomainBlocked(domain)) {
+            queriesBlocked.incrementAndGet()
             Log.d(TAG, "Blocking DNS for $domain")
             writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_NXDOMAIN), srcIpBytes, srcPort)
             return

@@ -35,6 +35,7 @@ import com.farhanaliraza.wakt.presentation.views.CircularTimerView
 import com.farhanaliraza.wakt.utils.BrickSessionManager
 import com.farhanaliraza.wakt.utils.EssentialAppsManager
 import com.farhanaliraza.wakt.utils.GlobalSettingsManager
+import com.farhanaliraza.wakt.utils.ServiceOptimizer
 import com.farhanaliraza.wakt.utils.TemporaryUnlock
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +80,9 @@ class AppBlockingService : AccessibilityService() {
 
     @Inject
     lateinit var globalSettingsManager: GlobalSettingsManager
+
+    @Inject
+    lateinit var serviceOptimizer: ServiceOptimizer
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -319,6 +323,10 @@ class AppBlockingService : AccessibilityService() {
 
         // Start periodic monitoring for blocked apps
         startPeriodicAppMonitoring()
+
+        // The system starts this service at boot, so this is the earliest point to
+        // bring the DNS website filter back up without the user opening the app.
+        serviceOptimizer.optimizeServices()
     }
     
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

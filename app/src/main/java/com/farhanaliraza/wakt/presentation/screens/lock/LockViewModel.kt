@@ -194,6 +194,12 @@ class LockViewModel @Inject constructor(
     }
 
     // App tab functions
+
+    /** Re-evaluates which services should run, e.g. after VPN consent was granted. */
+    fun refreshServices() {
+        serviceOptimizer.optimizeServices()
+    }
+
     fun deleteBlockedItem(item: BlockedItem) {
         viewModelScope.launch {
             blockedItemDao.deleteBlockedItem(item)

@@ -234,9 +234,11 @@ private fun WebsitesTab(
         )
 
         Text(
-            text = "Websites are blocked at the DNS level, which also blocks the matching apps. " +
-                "You'll be asked to allow a VPN connection once - all filtering happens locally " +
-                "on your device, nothing is sent to a server and browsing speed is unaffected.",
+            text = "Enter the main domain, e.g. facebook.com. All its subdomains (www., m., ...) " +
+                "and the matching app are blocked at the DNS level. You'll be asked to allow a VPN " +
+                "connection once - all filtering happens locally on your device, nothing is sent " +
+                "to a server and browsing speed is unaffected. Already-open pages may keep working " +
+                "until the browser is closed.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
