@@ -104,7 +104,7 @@ fun PhoneTab(
             onClick = {
                 val totalMinutes = (uiState.selectedHours * 60) + uiState.selectedMinutes
                 if (totalMinutes > 0) {
-                    if (PermissionHelper.isAccessibilityServiceEnabled(context)) {
+                    if (PermissionHelper.areAllPermissionsGranted(context)) {
                         showConfirmDialog = true
                     } else {
                         showPermissionDialog = true
@@ -214,16 +214,19 @@ fun PhoneTab(
             onDismissRequest = { showPermissionDialog = false },
             title = { Text("Permission Required") },
             text = {
-                Text("Lock sessions require the Accessibility Service to be enabled.")
+                Text(
+                    "Lock sessions need Usage Access and Display over other apps " +
+                        "(or, optionally, the Accessibility Service). Grant them from the banner above."
+                )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        PermissionHelper.requestAccessibilityPermission(context)
                         showPermissionDialog = false
+                        onRequestPermissions()
                     }
                 ) {
-                    Text("Enable Service")
+                    Text("Set Up")
                 }
             },
             dismissButton = {

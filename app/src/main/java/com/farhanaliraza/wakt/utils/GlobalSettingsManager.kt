@@ -23,6 +23,20 @@ class GlobalSettingsManager @Inject constructor(
     private val _emergencyExitEnabled = MutableStateFlow(isEmergencyExitEnabled())
     val emergencyExitEnabled: StateFlow<Boolean> = _emergencyExitEnabled.asStateFlow()
 
+    private val _vpnExcludedApps = MutableStateFlow(getVpnExcludedApps())
+    /** Apps kept off the DNS website filter, e.g. banking apps that refuse to run with a VPN. */
+    val vpnExcludedApps: StateFlow<Set<String>> = _vpnExcludedApps.asStateFlow()
+
+    fun getVpnExcludedApps(): Set<String> {
+        val apps = prefs.getString(KEY_VPN_EXCLUDED_APPS, "") ?: ""
+        return if (apps.isBlank()) emptySet() else apps.split(",").filter { it.isNotBlank() }.toSet()
+    }
+
+    fun setVpnExcludedApps(apps: Set<String>) {
+        prefs.edit().putString(KEY_VPN_EXCLUDED_APPS, apps.joinToString(",")).apply()
+        _vpnExcludedApps.value = apps
+    }
+
     fun getClickCount(): Int {
         return prefs.getInt(KEY_CLICK_COUNT, DEFAULT_CLICK_COUNT)
     }
@@ -56,6 +70,7 @@ class GlobalSettingsManager @Inject constructor(
         private const val KEY_CLICK_COUNT = "click_count"
         private const val KEY_DEFAULT_ALLOWED_APPS = "default_allowed_apps"
         private const val KEY_EMERGENCY_EXIT_ENABLED = "emergency_exit_enabled"
+        private const val KEY_VPN_EXCLUDED_APPS = "vpn_excluded_apps"
         private const val DEFAULT_CLICK_COUNT = 500
         const val MIN_CLICK_COUNT = 100
         const val MAX_CLICK_COUNT = 1000

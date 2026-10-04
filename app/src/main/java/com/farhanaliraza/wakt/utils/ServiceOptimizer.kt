@@ -7,6 +7,8 @@ import android.os.Build
 import android.util.Log
 import com.farhanaliraza.wakt.data.database.dao.BlockedItemDao
 import com.farhanaliraza.wakt.data.database.entity.BlockType
+import com.farhanaliraza.wakt.services.AppBlockingService
+import com.farhanaliraza.wakt.services.BrickEnforcementService
 import com.farhanaliraza.wakt.services.WebsiteBlockingVpnService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -16,13 +18,17 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Service optimizer for battery efficiency
- * Manages service lifecycle based on blocked items
+ * Decides which background services need to run for the current set of blocks:
+ * - the DNS website filter (VPN) while website blocks exist and consent is granted
+ * - the polling enforcement service while app blocks exist and the accessibility
+ *   service is not available to handle them
  */
 @Singleton
 class ServiceOptimizer @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val blockedItemDao: BlockedItemDao
+    private val blockedItemDao: BlockedItemDao,
+    private val appBlockChecker: AppBlockChecker,
+    private val foregroundAppDetector: ForegroundAppDetector
 ) {
 
     fun optimizeServices() {
@@ -43,18 +49,29 @@ class ServiceOptimizer @Inject constructor(
                     stopVpnServiceIfRunning()
                 }
 
-                // Note: Accessibility service lifecycle is managed by the system
-                // We optimize it through configuration, not starting/stopping
-
+                optimizeAppEnforcement()
             } catch (e: Exception) {
                 Log.e("ServiceOptimizer", "Error optimizing services", e)
             }
         }
     }
 
+    private suspend fun optimizeAppEnforcement() {
+        // The accessibility service handles app blocks itself; the enforcement
+        // service stops on its own when it notices accessibility is connected.
+        if (AppBlockingService.isConnected()) return
+        if (!foregroundAppDetector.isAvailable()) {
+            Log.d("ServiceOptimizer", "No foreground detection available, enforcement not started")
+            return
+        }
+        if (appBlockChecker.hasAnyAppBlocks()) {
+            BrickEnforcementService.start(context)
+        }
+    }
+
     private fun startVpnServiceIfPossible() {
         // VpnService.prepare() returns null once the user has granted VPN
-        // consent (requested from the UI when a website block is added).
+        // consent (requested from the UI when a website block exists).
         if (VpnService.prepare(context) != null) {
             Log.d("ServiceOptimizer", "VPN consent not granted yet, skipping VPN start")
             return

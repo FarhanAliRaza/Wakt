@@ -18,6 +18,7 @@ import com.farhanaliraza.wakt.data.database.dao.BlockedItemDao
 import com.farhanaliraza.wakt.data.database.dao.GoalBlockDao
 import com.farhanaliraza.wakt.data.database.dao.GoalBlockItemDao
 import com.farhanaliraza.wakt.data.database.entity.BlockType
+import com.farhanaliraza.wakt.utils.GlobalSettingsManager
 import com.farhanaliraza.wakt.utils.TemporaryUnlock
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.FileInputStream
@@ -56,6 +57,7 @@ class WebsiteBlockingVpnService : VpnService() {
     @Inject lateinit var goalBlockDao: GoalBlockDao
     @Inject lateinit var goalBlockItemDao: GoalBlockItemDao
     @Inject lateinit var temporaryUnlock: TemporaryUnlock
+    @Inject lateinit var globalSettingsManager: GlobalSettingsManager
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tunReaderThread: Thread? = null
@@ -72,6 +74,8 @@ class WebsiteBlockingVpnService : VpnService() {
     @Volatile private var blockedDomains: Map<String, String> = emptyMap()
 
     @Volatile private var upstreamServers: List<InetAddress> = emptyList()
+    /** Destination IPs whose port-53 traffic is handled by this filter (local fake DNS + real upstreams). */
+    @Volatile private var interceptedDnsTargets: Set<String> = setOf(VPN_DNS_LOCAL)
     @Volatile private var upstreamIndex = 0
     @Volatile private var consecutiveTimeouts = 0
 
@@ -84,6 +88,7 @@ class WebsiteBlockingVpnService : VpnService() {
             val originalTxnId1: Byte,
             val clientIp: ByteArray,
             val clientPort: Int,
+            val serverIp: ByteArray,
             val cacheKey: String?,
             val queryPayload: ByteArray,
             val sentAtMs: Long
@@ -162,12 +167,43 @@ class WebsiteBlockingVpnService : VpnService() {
                         .addDnsServer(VPN_DNS_LOCAL)
                         .setBlocking(true)
                         .setMtu(4096)
+
+        // Route the fake DNS address explicitly (same approach as DNS66 and
+        // personalDNSfilter) instead of relying on the subnet route Android
+        // derives from the interface address.
+        val targets = linkedSetOf(VPN_DNS_LOCAL)
+        vpnBuilder.addRoute(VPN_DNS_LOCAL, 32)
+        // Some apps (notably Chrome) send DNS straight to the network's own
+        // resolvers instead of the VPN's. Routing those /32s into the TUN makes
+        // such queries land here too; the protected upstream socket still
+        // reaches them for forwarding.
+        for (server in upstreamServers) {
+            if (server !is Inet4Address) continue
+            val ip = server.hostAddress ?: continue
+            if (ip == VPN_ADDRESS || ip.startsWith("10.0.0.")) continue
+            try {
+                vpnBuilder.addRoute(ip, 32)
+                targets.add(ip)
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot route upstream DNS $ip into the TUN", e)
+            }
+        }
+        interceptedDnsTargets = targets
+
         // Cover ALL apps (so DNS blocking also stops apps like Instagram/TikTok,
-        // not just browsers), but keep Wakt itself off the VPN.
+        // not just browsers), but keep Wakt itself off the VPN, plus any apps the
+        // user excluded (e.g. banking apps that refuse to run under a VPN).
         try {
             vpnBuilder.addDisallowedApplication(packageName)
         } catch (e: Exception) {
             Log.w(TAG, "Cannot exclude own package from VPN", e)
+        }
+        for (excluded in globalSettingsManager.getVpnExcludedApps()) {
+            try {
+                vpnBuilder.addDisallowedApplication(excluded)
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot exclude $excluded from VPN (not installed?)")
+            }
         }
 
         try {
@@ -423,7 +459,7 @@ class WebsiteBlockingVpnService : VpnService() {
         if (protocol != 17) return // Not UDP
 
         val destIpBytes = byteArrayOf(packet[16], packet[17], packet[18], packet[19])
-        if (ipv4ToString(destIpBytes) != VPN_DNS_LOCAL) return
+        if (ipv4ToString(destIpBytes) !in interceptedDnsTargets) return
 
         val udpOffset = ipHeaderLength
         val destPort =
@@ -455,7 +491,7 @@ class WebsiteBlockingVpnService : VpnService() {
         if (domain != null && isDomainBlocked(domain)) {
             queriesBlocked.incrementAndGet()
             Log.d(TAG, "Blocking DNS for $domain")
-            writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_NXDOMAIN), srcIpBytes, srcPort)
+            writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_NXDOMAIN), srcIpBytes, srcPort, destIpBytes)
             return
         }
 
@@ -467,7 +503,7 @@ class WebsiteBlockingVpnService : VpnService() {
                 val reply = cached.payload.copyOf()
                 reply[0] = dnsPayload[0]
                 reply[1] = dnsPayload[1]
-                writeDnsResponseToTun(reply, srcIpBytes, srcPort)
+                writeDnsResponseToTun(reply, srcIpBytes, srcPort, destIpBytes)
                 return
             }
         }
@@ -475,19 +511,20 @@ class WebsiteBlockingVpnService : VpnService() {
         // 3. Forward upstream asynchronously - remap the transaction ID so
         //    concurrent queries from different clients can't collide, and let
         //    the receiver thread deliver the reply. The reader never waits.
-        forwardQueryUpstream(dnsPayload, srcIpBytes, srcPort, cacheKey)
+        forwardQueryUpstream(dnsPayload, srcIpBytes, srcPort, destIpBytes, cacheKey)
     }
 
     private fun forwardQueryUpstream(
             dnsPayload: ByteArray,
             clientIp: ByteArray,
             clientPort: Int,
+            serverIp: ByteArray,
             cacheKey: String?
     ) {
         val socket = upstreamSocket ?: return
         val upstream = currentUpstream()
         if (upstream == null) {
-            writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_SERVFAIL), clientIp, clientPort)
+            writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_SERVFAIL), clientIp, clientPort, serverIp)
             return
         }
 
@@ -505,6 +542,7 @@ class WebsiteBlockingVpnService : VpnService() {
                         originalTxnId1 = dnsPayload[1],
                         clientIp = clientIp,
                         clientPort = clientPort,
+                        serverIp = serverIp,
                         cacheKey = cacheKey,
                         queryPayload = dnsPayload,
                         sentAtMs = System.currentTimeMillis()
@@ -519,7 +557,7 @@ class WebsiteBlockingVpnService : VpnService() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to send DNS query upstream", e)
             pendingQueries.remove(upstreamId)
-            writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_SERVFAIL), clientIp, clientPort)
+            writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_SERVFAIL), clientIp, clientPort, serverIp)
         }
     }
 
@@ -560,7 +598,7 @@ class WebsiteBlockingVpnService : VpnService() {
             cacheResponse(pending.cacheKey, reply)
         }
 
-        writeDnsResponseToTun(reply, pending.clientIp, pending.clientPort)
+        writeDnsResponseToTun(reply, pending.clientIp, pending.clientPort, pending.serverIp)
     }
 
     private fun sweepTimedOutQueries() {
@@ -579,7 +617,8 @@ class WebsiteBlockingVpnService : VpnService() {
                 writeDnsResponseToTun(
                         buildDnsErrorResponse(pending.queryPayload, RCODE_SERVFAIL),
                         pending.clientIp,
-                        pending.clientPort
+                        pending.clientPort,
+                        pending.serverIp
                 )
             }
         }
@@ -729,11 +768,16 @@ class WebsiteBlockingVpnService : VpnService() {
         return response
     }
 
-    private fun writeDnsResponseToTun(dnsPayload: ByteArray, clientIp: ByteArray, clientPort: Int) {
+    private fun writeDnsResponseToTun(
+            dnsPayload: ByteArray,
+            clientIp: ByteArray,
+            clientPort: Int,
+            serverIp: ByteArray
+    ) {
         val output = tunOutput ?: return
         val packet =
                 buildIpv4UdpPacket(
-                        srcIp = ipv4StringToBytes(VPN_DNS_LOCAL),
+                        srcIp = serverIp,
                         srcPort = 53,
                         destIp = clientIp,
                         destPort = clientPort,

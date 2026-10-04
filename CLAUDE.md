@@ -148,11 +148,24 @@ val launcherPackages = setOf(
 
 ## Required Permissions
 
-- QUERY_ALL_PACKAGES: App selector
-- PACKAGE_USAGE_STATS: Foreground app detection (requires manual Settings grant)
-- BIND_ACCESSIBILITY_SERVICE: App monitoring (requires manual enable)
-- SYSTEM_ALERT_WINDOW: Overlays
-- FOREGROUND_SERVICE: Background services
+Two setups exist because many banking apps refuse to run while any third-party
+accessibility service is enabled (see `PermissionHelper`):
+
+- **Standard (default):** PACKAGE_USAGE_STATS (foreground detection via
+  `ForegroundAppDetector`, reading usage events) + SYSTEM_ALERT_WINDOW (lock
+  screen via `BrickOverlayService` with TYPE_APPLICATION_OVERLAY, challenge
+  screen via `BlockingOverlayActivity`). `BrickEnforcementService` polls every
+  second and uses `AppBlockChecker` for block decisions.
+- **Enhanced (optional):** BIND_ACCESSIBILITY_SERVICE. `AppBlockingService`
+  reacts to window events, draws the same lock screen (`BrickOverlayController`)
+  as TYPE_ACCESSIBILITY_OVERLAY and adds URL-bar website blocking in browsers.
+  When connected, the enforcement service hands app blocks over to it.
+- Always: QUERY_ALL_PACKAGES (app selector), FOREGROUND_SERVICE*, RECEIVE_BOOT_COMPLETED
+  (`BootReceiver` restores services), BIND_VPN_SERVICE (DNS website filter).
+
+`ServiceOptimizer.optimizeServices()` is the single place that decides which
+background services should run; call it after anything that changes blocks or
+permissions.
 
 ## Challenge Types
 
@@ -163,7 +176,7 @@ val launcherPackages = setOf(
 ## Development Notes
 
 - Overlays use Views (not Compose) because Compose doesn't render properly in overlay contexts
-- WebsiteBlockingVpnService blocks websites via a DNS-only VPN: it advertises a local DNS server (10.0.0.1) on the TUN with no default route, so only DNS queries are processed in userspace and browsing traffic/battery are unaffected. Queries are forwarded asynchronously (transaction-ID remapping + receiver thread), answered from a TTL cache when possible, and blocked domains get NXDOMAIN. Covers all apps except Wakt itself, so DNS blocks also stop the matching native apps. Requires one-time VPN consent (requested in AddBlockScreen); ServiceOptimizer starts/stops the service based on active website blocks. Caveat: strict Private DNS (DoT) bypasses it.
+- WebsiteBlockingVpnService blocks websites via a DNS-only VPN: it advertises a local DNS server (10.0.0.1) on the TUN with no default route, so only DNS queries are processed in userspace and browsing traffic/battery are unaffected. It adds explicit /32 routes for 10.0.0.1 and for every detected upstream DNS server (DNS66-style) so apps that query the network's resolvers directly are intercepted as well, and it excludes apps listed in `GlobalSettingsManager.vpnExcludedApps`. Queries are forwarded asynchronously (transaction-ID remapping + receiver thread), answered from a TTL cache when possible, and blocked domains get NXDOMAIN. Covers all apps except Wakt itself, so DNS blocks also stop the matching native apps. Requires one-time VPN consent (requested in AddBlockScreen); ServiceOptimizer starts/stops the service based on active website blocks. Caveat: strict Private DNS (DoT) bypasses it.
 - Allowed apps stored as comma-separated string in DB
 - Services use SupervisorJob for coroutine scope management
 - Database operations always on Dispatchers.IO

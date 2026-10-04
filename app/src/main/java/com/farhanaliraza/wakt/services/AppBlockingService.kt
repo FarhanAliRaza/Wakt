@@ -11,15 +11,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.view.Gravity
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.widget.FrameLayout
-import android.widget.GridLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.farhanaliraza.wakt.R
 import com.farhanaliraza.wakt.data.database.dao.BlockedItemDao
@@ -30,8 +24,6 @@ import com.farhanaliraza.wakt.data.database.entity.BlockType
 import com.farhanaliraza.wakt.data.database.entity.ChallengeType
 import com.farhanaliraza.wakt.data.database.entity.PhoneBrickSession
 import com.farhanaliraza.wakt.presentation.activities.BlockingOverlayActivity
-import com.farhanaliraza.wakt.presentation.activities.BrickBlockingOverlay
-import com.farhanaliraza.wakt.presentation.views.CircularTimerView
 import com.farhanaliraza.wakt.utils.BrickSessionManager
 import com.farhanaliraza.wakt.utils.EssentialAppsManager
 import com.farhanaliraza.wakt.utils.GlobalSettingsManager
@@ -44,14 +36,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -86,28 +74,8 @@ class AppBlockingService : AccessibilityService() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // Brick overlay properties (using TYPE_ACCESSIBILITY_OVERLAY - no "overlaying other apps" notification)
-    private var windowManager: WindowManager? = null
-    private var brickOverlayView: FrameLayout? = null
-    private var isBrickOverlayShowing = false
-    private var overlayUpdateJob: Job? = null
-    private var sessionMonitorJob: Job? = null
-    private var circularTimerView: CircularTimerView? = null
-    private var timeTextView: TextView? = null
-    private var endTimeTextView: TextView? = null
-    private var totalSessionSeconds: Int = 0
-
-    // Emergency override mode
-    private var isEmergencyMode = false
-    private var emergencyClicksRemaining = 0
-    private var emergencyClicksTextView: TextView? = null
-
-    // Pending app launch tracking (for hiding overlay when allowed app launches)
-    private var pendingLaunchPackage: String? = null
-    private var pendingLaunchTime: Long = 0L
-    private var confirmedLaunchPackage: String? = null
-    private var launchConfirmedTime: Long = 0L
-    private var pendingLaunchJob: Job? = null
+    // Brick lock screen, attached as TYPE_ACCESSIBILITY_OVERLAY (no "displaying over other apps" notification)
+    private var brickOverlay: BrickOverlayController? = null
     private var lastCheckedPackage: String? = null
     private val handler = Handler(Looper.getMainLooper())
     private val blockedWebsiteCooldown = mutableMapOf<String, Long>()
@@ -127,10 +95,6 @@ class AppBlockingService : AccessibilityService() {
         private const val WEBSITE_BLOCK_COOLDOWN_MS = 2000L // 2 seconds cooldown for tab close animation
         private const val APP_BLOCK_COOLDOWN_MS = 5000L // 5 seconds cooldown for app blocks
 
-        // Overlay constants
-        private const val OVERLAY_LAUNCH_TIMEOUT_MS = 3000L
-        private const val OVERLAY_POST_LAUNCH_GRACE_MS = 2000L
-
         // SINGLE SOURCE OF TRUTH: Should overlay be showing?
         @Volatile
         var shouldBrickOverlayBeShowing: Boolean = false
@@ -141,6 +105,23 @@ class AppBlockingService : AccessibilityService() {
 
         // Last known foreground package from accessibility events (fallback when other methods fail)
         private var lastKnownForegroundPackage: String? = null
+
+        /** True while the accessibility service is enabled and bound by the system. */
+        fun isConnected(): Boolean = instance != null
+
+        /**
+         * Foreground package from accessibility data only (no Usage Access fallback).
+         * Null when the service is not connected, so callers can fall back themselves.
+         */
+        fun getForegroundPackageFromAccessibility(): String? {
+            val inst = instance ?: return null
+            if (!lastKnownForegroundPackage.isNullOrBlank()) return lastKnownForegroundPackage
+            return try {
+                inst.rootInActiveWindow?.packageName?.toString()
+            } catch (e: Exception) {
+                null
+            }
+        }
 
         /**
          * Update the last known foreground package (called from accessibility events)
@@ -242,7 +223,7 @@ class AppBlockingService : AccessibilityService() {
          */
         fun requestShowBrickOverlay() {
             shouldBrickOverlayBeShowing = true
-            instance?.showBrickOverlayInternal()
+            instance?.brickOverlay?.show()
             Log.d(TAG, "Brick overlay requested to show (shouldBrickOverlayBeShowing=true)")
         }
 
@@ -251,7 +232,7 @@ class AppBlockingService : AccessibilityService() {
          */
         fun requestHideBrickOverlayForAllowedApp() {
             shouldBrickOverlayBeShowing = false
-            instance?.hideBrickOverlayInternal()
+            instance?.brickOverlay?.hide()
             Log.d(TAG, "Brick overlay hidden for allowed app launch (shouldBrickOverlayBeShowing=false)")
         }
 
@@ -260,7 +241,7 @@ class AppBlockingService : AccessibilityService() {
          */
         fun requestHideBrickOverlayForSessionEnd() {
             shouldBrickOverlayBeShowing = false
-            instance?.hideBrickOverlayInternal()
+            instance?.brickOverlay?.hide()
             Log.d(TAG, "Brick overlay hidden for session end (shouldBrickOverlayBeShowing=false)")
         }
 
@@ -273,41 +254,30 @@ class AppBlockingService : AccessibilityService() {
          * Check if pending launch for package (used during brick mode)
          */
         fun isPendingBrickLaunch(packageName: String?): Boolean {
-            if (packageName == null) return false
-            val inst = instance ?: return false
-
-            val now = System.currentTimeMillis()
-
-            // Check if still waiting for app to launch
-            if (inst.pendingLaunchPackage != null && packageName == inst.pendingLaunchPackage) {
-                if (now - inst.pendingLaunchTime < OVERLAY_LAUNCH_TIMEOUT_MS) {
-                    return true
-                }
-            }
-
-            // Check if within grace period after app was confirmed
-            if (inst.confirmedLaunchPackage != null &&
-                packageName == inst.confirmedLaunchPackage &&
-                now - inst.launchConfirmedTime < OVERLAY_POST_LAUNCH_GRACE_MS) {
-                Log.d(TAG, "Within post-launch grace period - allowing $packageName")
-                return true
-            }
-
-            return false
+            return instance?.brickOverlay?.isPendingLaunch(packageName) ?: false
         }
 
         /**
          * Clear pending launch tracking
          */
         fun clearPendingBrickLaunch() {
-            instance?.pendingLaunchPackage = null
+            instance?.brickOverlay?.clearPendingLaunch()
         }
     }
     
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        brickOverlay = BrickOverlayController(
+            context = this,
+            windowType = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            brickSessionManager = brickSessionManager,
+            essentialAppsManager = essentialAppsManager,
+            globalSettingsManager = globalSettingsManager,
+            foregroundPackageProvider = { getForegroundPackageReliably() },
+            onHideForAllowedApp = { BrickOverlayService.requestHideForAllowedApp() },
+            onSessionEnded = { BrickOverlayService.requestHideForSessionEnd() }
+        )
         Log.d(TAG, "AppBlockingService connected")
 
         val info = AccessibilityServiceInfo().apply {
@@ -1329,810 +1299,20 @@ class AppBlockingService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        hideBrickOverlayInternal()
-        overlayUpdateJob?.cancel()
-        sessionMonitorJob?.cancel()
-        pendingLaunchJob?.cancel()
+        brickOverlay?.destroy()
+        brickOverlay = null
         instance = null
+        // Accessibility just went away: hand app blocks over to the polling
+        // enforcement service if Usage Access allows it.
+        try {
+            serviceOptimizer.optimizeServices()
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not hand over enforcement", e)
+        }
         monitoringJob?.cancel()
         serviceScope.cancel()
         handler.removeCallbacksAndMessages(null)
         shouldBrickOverlayBeShowing = false
         Log.d(TAG, "AppBlockingService destroyed")
-    }
-
-    // ============== BRICK OVERLAY IMPLEMENTATION (TYPE_ACCESSIBILITY_OVERLAY) ==============
-
-    /**
-     * Internal method to show the brick overlay using TYPE_ACCESSIBILITY_OVERLAY
-     * This overlay type does NOT trigger the "app is overlaying other apps" notification!
-     */
-    private fun showBrickOverlayInternal() {
-        if (isBrickOverlayShowing) {
-            Log.d(TAG, "Brick overlay already showing")
-            return
-        }
-
-        try {
-            // Create container for overlay using traditional Views
-            brickOverlayView = FrameLayout(this).apply {
-                setBackgroundColor(android.graphics.Color.parseColor("#FF2E2E2E"))
-            }
-
-            // Build the overlay content
-            val contentView = buildBrickOverlayContent()
-            brickOverlayView?.addView(contentView)
-
-            // Window parameters using TYPE_ACCESSIBILITY_OVERLAY (the key change!)
-            val layoutParams = WindowManager.LayoutParams().apply {
-                type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY  // NO SYSTEM NOTIFICATION!
-                format = android.graphics.PixelFormat.TRANSLUCENT
-                flags = (
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or  // Extend beyond screen (cover status bar)
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN or  // Hide status bar
-                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
-                )
-                width = WindowManager.LayoutParams.MATCH_PARENT
-                height = WindowManager.LayoutParams.MATCH_PARENT
-                gravity = Gravity.START or Gravity.TOP
-                x = 0
-                y = 0
-            }
-
-            // Set system UI visibility to hide status bar and prevent notification shade
-            @Suppress("DEPRECATION")
-            brickOverlayView?.systemUiVisibility = (
-                android.view.View.SYSTEM_UI_FLAG_FULLSCREEN or
-                android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
-                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
-                android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
-                android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
-                android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-            )
-
-            windowManager?.addView(brickOverlayView, layoutParams)
-            isBrickOverlayShowing = true
-            Log.d(TAG, "Brick overlay shown successfully using TYPE_ACCESSIBILITY_OVERLAY")
-
-            // Start update loop for time remaining
-            startBrickOverlayUpdateLoop()
-
-            // Start session monitoring
-            startBrickSessionMonitoring()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error showing brick overlay", e)
-            isBrickOverlayShowing = false
-        }
-    }
-
-    /**
-     * Internal method to hide the brick overlay
-     */
-    private fun hideBrickOverlayInternal() {
-        try {
-            if (brickOverlayView != null && windowManager != null) {
-                windowManager?.removeView(brickOverlayView)
-                brickOverlayView = null
-                isBrickOverlayShowing = false
-                overlayUpdateJob?.cancel()
-                sessionMonitorJob?.cancel()
-                Log.d(TAG, "Brick overlay hidden (isBrickOverlayShowing=false)")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error hiding brick overlay", e)
-        }
-    }
-
-    /**
-     * Build the main overlay content with timer
-     */
-    private fun buildBrickOverlayContent(): FrameLayout {
-        val currentSession = brickSessionManager.getCurrentSession()
-
-        // Calculate total session duration
-        totalSessionSeconds = if (currentSession != null &&
-            currentSession.currentSessionStartTime != null &&
-            currentSession.currentSessionEndTime != null) {
-            ((currentSession.currentSessionEndTime!! - currentSession.currentSessionStartTime!!) / 1000).toInt()
-        } else {
-            currentSession?.durationMinutes?.times(60) ?: 0
-        }
-
-        // Main container
-        val container = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundColor(android.graphics.Color.parseColor("#FF0F172A")) // Dark slate background
-        }
-
-        // Card with rounded corners containing timer
-        val timerCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            ).apply {
-                marginStart = dpToPx(16)
-                marginEnd = dpToPx(16)
-            }
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dpToPx(24), dpToPx(40), dpToPx(24), dpToPx(32))
-
-            val cardBackground = android.graphics.drawable.GradientDrawable().apply {
-                setColor(android.graphics.Color.parseColor("#FF1E293B")) // Slate800
-                cornerRadius = dpToPx(32).toFloat()
-            }
-            background = cardBackground
-        }
-
-        // Circular timer container
-        val timerContainer = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                dpToPx(220),
-                dpToPx(220)
-            ).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                bottomMargin = dpToPx(32)
-            }
-        }
-
-        // Circular timer view
-        circularTimerView = CircularTimerView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            setStrokeWidth(dpToPx(6).toFloat())
-        }
-        timerContainer.addView(circularTimerView)
-
-        // Center content (Left time label + countdown)
-        val centerContent = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            )
-            gravity = Gravity.CENTER
-        }
-
-        val leftTimeLabel = TextView(this).apply {
-            text = "Left time"
-            textSize = 12f
-            setTextColor(android.graphics.Color.parseColor("#FF94A3B8"))
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(4)
-            }
-        }
-        centerContent.addView(leftTimeLabel)
-
-        timeTextView = TextView(this).apply {
-            text = formatBrickCountdownTime()
-            textSize = 32f
-            setTextColor(android.graphics.Color.WHITE)
-            gravity = Gravity.CENTER
-            typeface = android.graphics.Typeface.create("monospace", android.graphics.Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        centerContent.addView(timeTextView)
-
-        timerContainer.addView(centerContent)
-        timerCard.addView(timerContainer)
-
-        // End time row
-        val endTimeRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-            gravity = Gravity.CENTER_VERTICAL
-        }
-
-        val endTimeLabel = TextView(this).apply {
-            text = "End Time"
-            textSize = 14f
-            setTextColor(android.graphics.Color.parseColor("#FF94A3B8"))
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            )
-        }
-        endTimeRow.addView(endTimeLabel)
-
-        endTimeTextView = TextView(this).apply {
-            text = formatBrickEndTime()
-            textSize = 14f
-            setTextColor(android.graphics.Color.WHITE)
-            typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            )
-        }
-        endTimeRow.addView(endTimeTextView)
-
-        timerCard.addView(endTimeRow)
-
-        // Emergency exit button
-        if (currentSession?.allowEmergencyOverride == true) {
-            val isEmergencyEnabled = globalSettingsManager.isEmergencyExitEnabled()
-            val buttonColor = if (isEmergencyEnabled) "#FFEF4444" else "#FF6B7280"
-
-            val emergencyButton = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    topMargin = dpToPx(24)
-                }
-                setPadding(dpToPx(16), dpToPx(12), dpToPx(16), dpToPx(12))
-                isClickable = isEmergencyEnabled
-                isFocusable = isEmergencyEnabled
-                alpha = if (isEmergencyEnabled) 1.0f else 0.5f
-
-                val buttonBackground = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(android.graphics.Color.TRANSPARENT)
-                    setStroke(dpToPx(1), android.graphics.Color.parseColor(buttonColor))
-                    cornerRadius = dpToPx(8).toFloat()
-                }
-                background = buttonBackground
-
-                if (isEmergencyEnabled) {
-                    setOnClickListener {
-                        launchBrickEmergencyOverride()
-                    }
-                }
-            }
-
-            val warningIcon = TextView(this).apply {
-                text = "⚠️"
-                textSize = 16f
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    marginEnd = dpToPx(8)
-                }
-            }
-            emergencyButton.addView(warningIcon)
-
-            val emergencyText = TextView(this).apply {
-                text = if (isEmergencyEnabled) "Emergency Exit" else "Emergency Exit (Disabled)"
-                textSize = 14f
-                setTextColor(android.graphics.Color.parseColor(buttonColor))
-                typeface = android.graphics.Typeface.defaultFromStyle(android.graphics.Typeface.BOLD)
-                layoutParams = LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                )
-            }
-            emergencyButton.addView(emergencyText)
-
-            timerCard.addView(emergencyButton)
-        }
-
-        container.addView(timerCard)
-
-        // Bottom apps container
-        val appsContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            ).apply {
-                bottomMargin = dpToPx(48)
-            }
-            gravity = Gravity.CENTER
-            setPadding(dpToPx(20), dpToPx(16), dpToPx(20), dpToPx(16))
-
-            val appsBackground = android.graphics.drawable.GradientDrawable().apply {
-                setColor(android.graphics.Color.parseColor("#FF1E293B"))
-                cornerRadius = dpToPx(24).toFloat()
-            }
-            background = appsBackground
-        }
-
-        // Load essential apps asynchronously
-        loadAndDisplayBrickEssentialApps(appsContainer)
-
-        container.addView(appsContainer)
-
-        // Update timer immediately
-        updateBrickTimerDisplay()
-
-        return container
-    }
-
-    /**
-     * Build emergency mode content with click challenge
-     */
-    private fun buildBrickEmergencyContent(): FrameLayout {
-        val container = FrameLayout(this).apply {
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            setBackgroundColor(android.graphics.Color.parseColor("#FF1A1A1A"))
-        }
-
-        val contentLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER
-            ).apply {
-                marginStart = dpToPx(32)
-                marginEnd = dpToPx(32)
-            }
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-
-        // Warning icon
-        val warningText = TextView(this).apply {
-            text = "⚠️"
-            textSize = 48f
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(16)
-            }
-        }
-        contentLayout.addView(warningText)
-
-        // Title
-        val titleText = TextView(this).apply {
-            text = "EMERGENCY OVERRIDE"
-            textSize = 24f
-            setTextColor(android.graphics.Color.parseColor("#EF4444"))
-            gravity = Gravity.CENTER
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(8)
-            }
-        }
-        contentLayout.addView(titleText)
-
-        // Subtitle
-        val subtitleText = TextView(this).apply {
-            text = "Tap the button to end session early"
-            textSize = 14f
-            setTextColor(android.graphics.Color.parseColor("#94A3B8"))
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(32)
-            }
-        }
-        contentLayout.addView(subtitleText)
-
-        // Clicks remaining counter
-        emergencyClicksTextView = TextView(this).apply {
-            text = "$emergencyClicksRemaining"
-            textSize = 64f
-            setTextColor(android.graphics.Color.parseColor("#EF4444"))
-            gravity = Gravity.CENTER
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(8)
-            }
-        }
-        contentLayout.addView(emergencyClicksTextView)
-
-        // "taps remaining" label
-        val tapsLabel = TextView(this).apply {
-            text = "taps remaining"
-            textSize = 16f
-            setTextColor(android.graphics.Color.parseColor("#94A3B8"))
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                bottomMargin = dpToPx(32)
-            }
-        }
-        contentLayout.addView(tapsLabel)
-
-        // Big TAP button
-        val tapButton = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            val size = dpToPx(160)
-            layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-                bottomMargin = dpToPx(32)
-            }
-            val gradientDrawable = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(android.graphics.Color.parseColor("#EF4444"))
-            }
-            background = gradientDrawable
-
-            setOnClickListener {
-                onBrickEmergencyTap()
-            }
-        }
-
-        val tapText = TextView(this).apply {
-            text = "TAP"
-            textSize = 32f
-            setTextColor(android.graphics.Color.WHITE)
-            setTypeface(null, android.graphics.Typeface.BOLD)
-            gravity = Gravity.CENTER
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.MATCH_PARENT
-            )
-        }
-        tapButton.addView(tapText)
-        contentLayout.addView(tapButton)
-
-        // Cancel button
-        val cancelButton = TextView(this).apply {
-            text = "Cancel"
-            textSize = 16f
-            setTextColor(android.graphics.Color.parseColor("#94A3B8"))
-            gravity = Gravity.CENTER
-            setPadding(dpToPx(24), dpToPx(12), dpToPx(24), dpToPx(12))
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-            setOnClickListener {
-                cancelBrickEmergencyMode()
-            }
-        }
-        contentLayout.addView(cancelButton)
-
-        container.addView(contentLayout)
-        return container
-    }
-
-    // ============== BRICK OVERLAY HELPER METHODS ==============
-
-    private fun dpToPx(dp: Int): Int {
-        return (dp * resources.displayMetrics.density).toInt()
-    }
-
-    private fun formatBrickCountdownTime(): String {
-        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
-        val hours = remainingSeconds / 3600
-        val minutes = (remainingSeconds % 3600) / 60
-        val seconds = remainingSeconds % 60
-        return String.format("%02d:%02d:%02d", hours, minutes, seconds)
-    }
-
-    private fun formatBrickEndTime(): String {
-        val currentSession = brickSessionManager.getCurrentSession()
-        val endTime = currentSession?.currentSessionEndTime ?: (System.currentTimeMillis() + 60000)
-        val dateFormat = SimpleDateFormat("MMM dd, hh:mm a", Locale.getDefault())
-        return dateFormat.format(Date(endTime))
-    }
-
-    private fun updateBrickTimerDisplay() {
-        val remainingSeconds = brickSessionManager.getCurrentSessionRemainingSeconds() ?: 0
-        circularTimerView?.setProgress(remainingSeconds, totalSessionSeconds)
-        timeTextView?.text = formatBrickCountdownTime()
-    }
-
-    private fun startBrickOverlayUpdateLoop() {
-        overlayUpdateJob?.cancel()
-        overlayUpdateJob = serviceScope.launch {
-            while (isActive && isBrickOverlayShowing) {
-                try {
-                    updateBrickTimerDisplay()
-                    delay(1_000)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error updating brick overlay", e)
-                    delay(1_000)
-                }
-            }
-        }
-    }
-
-    private fun startBrickSessionMonitoring() {
-        sessionMonitorJob?.cancel()
-        sessionMonitorJob = serviceScope.launch {
-            while (isActive && isBrickOverlayShowing) {
-                try {
-                    if (!brickSessionManager.isPhoneBricked()) {
-                        Log.d(TAG, "CRITICAL: Brick session ended - hiding overlay immediately")
-                        shouldBrickOverlayBeShowing = false
-                        hideBrickOverlayInternal()
-                        break
-                    }
-                    delay(500)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error monitoring brick session", e)
-                    delay(500)
-                }
-            }
-        }
-    }
-
-    private fun loadAndDisplayBrickEssentialApps(container: LinearLayout) {
-        serviceScope.launch {
-            try {
-                val displayedPackages = mutableSetOf<String>()
-
-                // Add Phone button
-                addBrickIntentButton(
-                    container = container,
-                    iconResId = android.R.drawable.sym_action_call,
-                    contentDescription = "Phone",
-                    intent = Intent(Intent.ACTION_DIAL).apply {
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                )
-
-                // Add Messages button
-                addBrickIntentButton(
-                    container = container,
-                    iconResId = android.R.drawable.sym_action_email,
-                    contentDescription = "Messages",
-                    intent = Intent(Intent.ACTION_SENDTO).apply {
-                        data = android.net.Uri.parse("smsto:")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                )
-
-                // Add default allowed apps from Settings
-                val defaultAllowedApps = globalSettingsManager.getDefaultAllowedApps()
-                for (packageName in defaultAllowedApps) {
-                    if (!displayedPackages.contains(packageName)) {
-                        tryAddBrickAppIcon(container, packageName, displayedPackages)
-                    }
-                }
-
-                // Add user-added essential apps
-                val essentialApps = essentialAppsManager.getAllEssentialApps().firstOrNull() ?: emptyList()
-                val userApps = essentialApps.filter { it.isUserAdded }
-
-                for (app in userApps) {
-                    if (!displayedPackages.contains(app.packageName)) {
-                        tryAddBrickAppIcon(container, app.packageName, displayedPackages)
-                    }
-                }
-
-                Log.d(TAG, "Displayed essential apps: Phone, Messages + ${displayedPackages.size} user apps")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading essential apps", e)
-            }
-        }
-    }
-
-    private fun addBrickIntentButton(
-        container: LinearLayout,
-        iconResId: Int,
-        contentDescription: String,
-        intent: Intent
-    ) {
-        val appButton = FrameLayout(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                dpToPx(48),
-                dpToPx(48)
-            ).apply {
-                marginStart = dpToPx(8)
-                marginEnd = dpToPx(8)
-            }
-            isClickable = true
-            isFocusable = true
-            this.contentDescription = contentDescription
-            setOnClickListener {
-                launchBrickIntent(intent, contentDescription)
-            }
-        }
-
-        val iconView = ImageView(this).apply {
-            setImageResource(iconResId)
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            setColorFilter(0xFFF1F5F9.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
-        }
-        appButton.addView(iconView)
-        container.addView(appButton)
-    }
-
-    private fun launchBrickIntent(intent: Intent, label: String) {
-        try {
-            val targetPackage = when (label) {
-                "Phone" -> essentialAppsManager.getDefaultDialerPackage()
-                "Messages" -> essentialAppsManager.getDefaultSmsPackage()
-                else -> null
-            }
-
-            pendingLaunchPackage = targetPackage
-            pendingLaunchTime = System.currentTimeMillis()
-
-            startActivity(intent)
-            Log.d(TAG, "Launched: $label (target: $targetPackage)")
-
-            serviceScope.launch {
-                brickSessionManager.logEssentialAppAccess(label)
-            }
-
-            if (targetPackage != null) {
-                startBrickPendingLaunchMonitor(targetPackage)
-            } else {
-                serviceScope.launch {
-                    delay(500)
-                    requestHideBrickOverlayForAllowedApp()
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error launching $label", e)
-            pendingLaunchPackage = null
-        }
-    }
-
-    private fun tryAddBrickAppIcon(
-        container: LinearLayout,
-        packageName: String,
-        displayedPackages: MutableSet<String>
-    ): Boolean {
-        if (displayedPackages.contains(packageName)) return false
-
-        try {
-            val appInfo = packageManager.getApplicationInfo(packageName, 0)
-            val appIcon = packageManager.getApplicationIcon(appInfo)
-
-            val appButton = FrameLayout(this).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    dpToPx(48),
-                    dpToPx(48)
-                ).apply {
-                    marginStart = dpToPx(8)
-                    marginEnd = dpToPx(8)
-                }
-                isClickable = true
-                isFocusable = true
-                setOnClickListener {
-                    launchBrickApp(packageName)
-                }
-            }
-
-            val iconView = ImageView(this).apply {
-                setImageDrawable(appIcon)
-                layoutParams = FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT
-                )
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            }
-            appButton.addView(iconView)
-            container.addView(appButton)
-            displayedPackages.add(packageName)
-            return true
-
-        } catch (e: Exception) {
-            Log.d(TAG, "App not found: $packageName")
-            return false
-        }
-    }
-
-    private fun launchBrickApp(packageName: String) {
-        try {
-            val intent = packageManager.getLaunchIntentForPackage(packageName)
-            if (intent != null) {
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
-
-                pendingLaunchPackage = packageName
-                pendingLaunchTime = System.currentTimeMillis()
-
-                startActivity(intent)
-                Log.d(TAG, "Launched allowed app: $packageName")
-
-                serviceScope.launch {
-                    brickSessionManager.logEssentialAppAccess(packageName)
-                }
-
-                startBrickPendingLaunchMonitor(packageName)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error launching app $packageName", e)
-            pendingLaunchPackage = null
-        }
-    }
-
-    private fun startBrickPendingLaunchMonitor(targetPackage: String) {
-        pendingLaunchJob?.cancel()
-        pendingLaunchJob = serviceScope.launch {
-            repeat(30) {
-                delay(100)
-
-                val foreground = getForegroundPackageReliably()
-                if (foreground == targetPackage) {
-                    Log.d(TAG, "Target app $targetPackage confirmed in foreground")
-                    confirmedLaunchPackage = targetPackage
-                    launchConfirmedTime = System.currentTimeMillis()
-                    pendingLaunchPackage = null
-
-                    requestHideBrickOverlayForAllowedApp()
-                    return@launch
-                }
-
-                if (System.currentTimeMillis() - pendingLaunchTime > OVERLAY_LAUNCH_TIMEOUT_MS) {
-                    Log.d(TAG, "Launch timeout for $targetPackage")
-                    pendingLaunchPackage = null
-                    return@launch
-                }
-            }
-
-            Log.d(TAG, "App $targetPackage never reached foreground")
-            pendingLaunchPackage = null
-        }
-    }
-
-    private fun launchBrickEmergencyOverride() {
-        isEmergencyMode = true
-        emergencyClicksRemaining = globalSettingsManager.getClickCount()
-        Log.d(TAG, "Entering emergency mode - $emergencyClicksRemaining clicks required")
-        rebuildBrickOverlayContent()
-    }
-
-    private fun rebuildBrickOverlayContent() {
-        brickOverlayView?.let { container ->
-            container.removeAllViews()
-            val contentView = if (isEmergencyMode) {
-                buildBrickEmergencyContent()
-            } else {
-                buildBrickOverlayContent()
-            }
-            container.addView(contentView)
-        }
-    }
-
-    private fun onBrickEmergencyTap() {
-        emergencyClicksRemaining--
-        emergencyClicksTextView?.text = "$emergencyClicksRemaining"
-
-        if (emergencyClicksRemaining <= 0) {
-            Log.d(TAG, "Emergency override complete - ending session")
-            serviceScope.launch {
-                brickSessionManager.emergencyOverride("User completed emergency challenge")
-            }
-        }
-    }
-
-    private fun cancelBrickEmergencyMode() {
-        isEmergencyMode = false
-        emergencyClicksRemaining = 0
-        Log.d(TAG, "Emergency mode cancelled")
-        rebuildBrickOverlayContent()
     }
 }

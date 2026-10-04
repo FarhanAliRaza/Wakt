@@ -8,6 +8,8 @@ on:
       - '[0-9]+.[0-9]+*'
     # A branch push whose head commit message contains "[release]" releases the
     # versionName from app/build.gradle.kts, moving that tag to the pushed commit.
+    # A message containing "[ci]" only builds and signs (no release), as a
+    # compile check for environments that cannot run Gradle locally.
     branches:
       - '**'
   workflow_dispatch:
@@ -25,7 +27,8 @@ jobs:
     if: >-
       startsWith(github.ref, 'refs/tags/') ||
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[release]')
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[ci]')
     runs-on: ubuntu-latest
 
     steps:
@@ -34,13 +37,16 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          HEAD_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION="$GITHUB_REF_NAME"; RELEASE=true
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             VERSION="${{ github.event.inputs.version }}"; RELEASE=false
           else
-            VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts); RELEASE=true
+            VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+            case "$HEAD_MESSAGE" in *"[release]"*) RELEASE=true ;; *) RELEASE=false ;; esac
           fi
           echo "Version: $VERSION (release: $RELEASE)"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

@@ -5,8 +5,16 @@
     <!-- Permission to query all installed packages on Android 11+ (required for app blocker functionality) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Permission for accessibility service (overlay uses TYPE_ACCESSIBILITY_OVERLAY - no separate permission needed) -->
+    <!-- Standard setup (no accessibility service, keeps banking apps working):
+         Usage Access detects the foreground app, overlay draws the lock screen. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Enhanced setup (optional): accessibility service reacts instantly and uses TYPE_ACCESSIBILITY_OVERLAY -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" tools:ignore="ProtectedPermissions" />
+
+    <!-- Restore enforcement services after a reboot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 
     <!-- Permission to request battery optimization exemption (prevents service from being killed) -->
@@ -120,7 +128,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Focus session enforcement and overlay management" />
+                android:value="App blocking and focus session enforcement without accessibility" />
         </service>
 
         <!-- Brick Overlay Service - persistent overlay window for brick enforcement -->
@@ -134,6 +142,17 @@
                 android:value="Persistent overlay for brick session UI" />
         </service>
         
+        <!-- Restores the DNS filter and enforcement after reboot or app update -->
+        <receiver
+            android:name=".receivers.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <!-- DNS-only website blocking VPN. Only DNS queries are routed through
              the TUN interface, so it has no impact on internet speed or battery. -->
         <service

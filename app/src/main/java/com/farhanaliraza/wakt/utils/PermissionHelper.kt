@@ -111,24 +111,87 @@ object PermissionHelper {
         }
     }
 
-    /**
-     * Check if all required permissions are granted.
-     * Note: Only Accessibility Service is required now - overlay uses TYPE_ACCESSIBILITY_OVERLAY.
-     */
-    fun areAllPermissionsGranted(context: Context): Boolean {
-        return isAccessibilityServiceEnabled(context)
+    // ============== OVERLAY ("Display over other apps") ==============
+
+    const val PERMISSION_USAGE_ACCESS = "Usage Access"
+    const val PERMISSION_OVERLAY = "Display over other apps"
+
+    fun isOverlayPermissionGranted(context: Context): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)
     }
 
-    fun getMissingPermissions(context: Context): List<String> {
-        val missing = mutableListOf<String>()
-
-        if (!isAccessibilityServiceEnabled(context)) {
-            missing.add("Accessibility Service")
+    fun requestOverlayPermission(context: Context) {
+        try {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${context.packageName}")
+            ).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e("PermissionHelper", "Failed to open overlay permission settings", e)
+            try {
+                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(intent)
+            } catch (e2: Exception) {
+                Log.e("PermissionHelper", "Fallback to app settings failed", e2)
+            }
         }
+    }
 
-        // Note: Overlay permission no longer needed - uses TYPE_ACCESSIBILITY_OVERLAY
+    // ============== PERMISSION MODEL ==============
+    //
+    // Two ways to run, so banking apps (which refuse to work while any
+    // third-party accessibility service is enabled) stay usable:
+    //
+    //  Standard : Usage Access (foreground detection) + Display over other apps
+    //             (lock screen). Nothing else required.
+    //  Enhanced : Accessibility Service alone covers both, reacts instantly and
+    //             adds URL-bar website blocking in browsers. Optional.
 
+    /** Something can tell us which app is in the foreground. */
+    fun hasForegroundDetection(context: Context): Boolean {
+        return isAccessibilityServiceEnabled(context) || isUsageAccessGranted(context)
+    }
+
+    /** Something can draw the lock screen over other apps. */
+    fun canShowLockScreen(context: Context): Boolean {
+        return isAccessibilityServiceEnabled(context) || isOverlayPermissionGranted(context)
+    }
+
+    /** Check if the app can enforce blocks right now, through either setup. */
+    fun areAllPermissionsGranted(context: Context): Boolean {
+        return hasForegroundDetection(context) && canShowLockScreen(context)
+    }
+
+    /**
+     * Permissions still needed for the standard (accessibility-free) setup.
+     * Empty when the accessibility service is enabled, since it covers everything.
+     */
+    fun getMissingPermissions(context: Context): List<String> {
+        if (isAccessibilityServiceEnabled(context)) return emptyList()
+        val missing = mutableListOf<String>()
+        if (!isUsageAccessGranted(context)) missing.add(PERMISSION_USAGE_ACCESS)
+        if (!isOverlayPermissionGranted(context)) missing.add(PERMISSION_OVERLAY)
         return missing
+    }
+
+    /**
+     * Some OEMs additionally gate starting a screen from the background behind
+     * their own toggle. Without it the challenge screen cannot appear over a
+     * blocked app in the standard setup.
+     */
+    fun getBackgroundPopupInstructions(): String? {
+        return when (getDeviceManufacturer()) {
+            "xiaomi", "redmi", "poco" ->
+                "Settings → Apps → Manage apps → Wakt → Other permissions → " +
+                    "\"Display pop-up windows while running in the background\" → Allow"
+            "vivo" -> "Settings → Apps → Wakt → Permissions → \"Background pop-ups\" → Allow"
+            "oppo", "realme", "oneplus" -> "Settings → Apps → Wakt → \"Allow pop-up windows in background\""
+            else -> null
+        }
     }
 
     // ============== BATTERY OPTIMIZATION ==============
