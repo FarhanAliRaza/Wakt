@@ -37,6 +37,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.farhanaliraza.wakt.presentation.components.PermissionDialog
 import com.farhanaliraza.wakt.presentation.screens.addblock.AddBlockScreen
+import com.farhanaliraza.wakt.presentation.screens.dnslog.DnsLogScreen
 import com.farhanaliraza.wakt.presentation.screens.lock.LockScreen
 import com.farhanaliraza.wakt.presentation.screens.lock.LockViewModel
 import com.farhanaliraza.wakt.presentation.screens.lock.TryLockScreen
@@ -157,6 +158,7 @@ fun MainScaffold(
                             navController.navigate("add_block")
                         },
                         onNavigateToTryLock = { navController.navigate("try_lock") },
+                        onNavigateToDnsLog = { navController.navigate("dns_log") },
                         viewModel = lockViewModel,
                         selectedTab = lockScreenTab,
                         onTabChange = { lockScreenTab = it },
@@ -178,6 +180,10 @@ fun MainScaffold(
                 AddBlockScreen(
                     onNavigateBack = { navController.popBackStack() }
                 )
+            }
+
+            composable("dns_log") {
+                DnsLogScreen(onNavigateBack = { navController.popBackStack() })
             }
 
             composable("try_lock") {

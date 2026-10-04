@@ -10,6 +10,7 @@ import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.farhanaliraza.wakt.MainActivity
@@ -27,11 +28,15 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * DNS-filtering VPN that blocks websites without slowing down the internet.
@@ -51,6 +56,16 @@ import kotlinx.coroutines.*
  *   SERVFAIL so resolvers fail fast instead of retrying for seconds.
  */
 @AndroidEntryPoint
+/** One DNS query as seen by the filter, for the in-app diagnostics log. */
+data class DnsLogEntry(
+        val timeMillis: Long,
+        val domain: String,
+        val queryType: String,
+        val action: String,
+        val app: String?,
+        val server: String
+)
+
 class WebsiteBlockingVpnService : VpnService() {
 
     @Inject lateinit var blockedItemDao: BlockedItemDao
@@ -125,6 +140,44 @@ class WebsiteBlockingVpnService : VpnService() {
         /** Diagnostics shown in the UI: DNS queries seen by the filter and how many were blocked. */
         val queriesSeen = AtomicInteger(0)
         val queriesBlocked = AtomicInteger(0)
+
+        private const val MAX_LOG_ENTRIES = 300
+        private val logBuffer = ArrayDeque<DnsLogEntry>()
+        private val _dnsLog = MutableStateFlow<List<DnsLogEntry>>(emptyList())
+        /** Newest first. */
+        val dnsLog: StateFlow<List<DnsLogEntry>> = _dnsLog.asStateFlow()
+
+        /** Human-readable summary of how the tunnel was configured on last start. */
+        @Volatile var diagnostics: String = "Filter has not started yet"
+            private set
+
+        fun clearDnsLog() {
+            synchronized(logBuffer) {
+                logBuffer.clear()
+                _dnsLog.value = emptyList()
+            }
+            queriesSeen.set(0)
+            queriesBlocked.set(0)
+        }
+
+        private fun appendLog(entry: DnsLogEntry) {
+            synchronized(logBuffer) {
+                logBuffer.addFirst(entry)
+                while (logBuffer.size > MAX_LOG_ENTRIES) logBuffer.removeLast()
+                _dnsLog.value = logBuffer.toList()
+            }
+        }
+
+        private fun queryTypeName(qtype: Int?): String = when (qtype) {
+            null -> "?"
+            1 -> "A"
+            28 -> "AAAA"
+            65 -> "HTTPS"
+            12 -> "PTR"
+            33 -> "SRV"
+            16 -> "TXT"
+            else -> qtype.toString()
+        }
     }
 
     override fun onCreate() {
@@ -189,6 +242,9 @@ class WebsiteBlockingVpnService : VpnService() {
             }
         }
         interceptedDnsTargets = targets
+        diagnostics = "Upstream DNS: ${upstreamServers.joinToString { it.hostAddress ?: "?" }}\n" +
+                "Intercepting port 53 to: ${targets.joinToString()}\n" +
+                "Excluded apps: ${globalSettingsManager.getVpnExcludedApps().ifEmpty { setOf("none") }.joinToString()}"
 
         // Cover ALL apps (so DNS blocking also stops apps like Instagram/TikTok,
         // not just browsers), but keep Wakt itself off the VPN, plus any apps the
@@ -487,10 +543,16 @@ class WebsiteBlockingVpnService : VpnService() {
         val domain = question?.first
         queriesSeen.incrementAndGet()
 
+        val serverIpString = ipv4ToString(destIpBytes)
+        val appLabel = resolveAppLabel(srcIpBytes, srcPort, destIpBytes)
+        val typeName = queryTypeName(question?.second)
+        val logDomain = domain ?: "(unparseable query)"
+
         // 1. Blocked domain: answer NXDOMAIN immediately, nothing goes upstream
         if (domain != null && isDomainBlocked(domain)) {
             queriesBlocked.incrementAndGet()
             Log.d(TAG, "Blocking DNS for $domain")
+            appendLog(DnsLogEntry(System.currentTimeMillis(), logDomain, typeName, "BLOCKED", appLabel, serverIpString))
             writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_NXDOMAIN), srcIpBytes, srcPort, destIpBytes)
             return
         }
@@ -503,6 +565,7 @@ class WebsiteBlockingVpnService : VpnService() {
                 val reply = cached.payload.copyOf()
                 reply[0] = dnsPayload[0]
                 reply[1] = dnsPayload[1]
+                appendLog(DnsLogEntry(System.currentTimeMillis(), logDomain, typeName, "CACHED", appLabel, serverIpString))
                 writeDnsResponseToTun(reply, srcIpBytes, srcPort, destIpBytes)
                 return
             }
@@ -511,6 +574,7 @@ class WebsiteBlockingVpnService : VpnService() {
         // 3. Forward upstream asynchronously - remap the transaction ID so
         //    concurrent queries from different clients can't collide, and let
         //    the receiver thread deliver the reply. The reader never waits.
+        appendLog(DnsLogEntry(System.currentTimeMillis(), logDomain, typeName, "FORWARDED", appLabel, serverIpString))
         forwardQueryUpstream(dnsPayload, srcIpBytes, srcPort, destIpBytes, cacheKey)
     }
 
@@ -612,6 +676,8 @@ class WebsiteBlockingVpnService : VpnService() {
             if (now - pending.sentAtMs > QUERY_TIMEOUT_MS) {
                 iterator.remove()
                 timedOut++
+                val q = extractQuestion(pending.queryPayload)
+                appendLog(DnsLogEntry(now, q?.first ?: "?", queryTypeName(q?.second), "TIMEOUT", null, ipv4ToString(pending.serverIp)))
                 // Fail fast: SERVFAIL beats letting the client's resolver
                 // retry into multi-second timeouts (that reads as "slow internet")
                 writeDnsResponseToTun(
@@ -787,6 +853,35 @@ class WebsiteBlockingVpnService : VpnService() {
             synchronized(tunWriteLock) { output.write(packet) }
         } catch (e: Exception) {
             if (isRunning) Log.e(TAG, "Failed to write DNS response to TUN", e)
+        }
+    }
+
+    // ============== APP ATTRIBUTION (Android 10+) ==============
+
+    private val uidLabelCache = ConcurrentHashMap<Int, String>()
+
+    /** Which app sent a DNS packet, via the VPN's connection-owner lookup. Null when unknown. */
+    private fun resolveAppLabel(srcIp: ByteArray, srcPort: Int, destIp: ByteArray): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return try {
+            val cm = getSystemService(ConnectivityManager::class.java) ?: return null
+            val uid = cm.getConnectionOwnerUid(
+                    OsConstants.IPPROTO_UDP,
+                    InetSocketAddress(InetAddress.getByAddress(srcIp), srcPort),
+                    InetSocketAddress(InetAddress.getByAddress(destIp), 53)
+            )
+            if (uid < 0) return null
+            uidLabelCache.getOrPut(uid) {
+                val packages = packageManager.getPackagesForUid(uid)
+                val pkg = packages?.firstOrNull() ?: return@getOrPut "uid $uid"
+                try {
+                    packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+                } catch (e: Exception) {
+                    pkg
+                }
+            }
+        } catch (e: Exception) {
+            null
         }
     }
 

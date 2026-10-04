@@ -3,6 +3,7 @@ package com.farhanaliraza.wakt.presentation.screens.lock
 import android.net.VpnService
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -31,6 +32,7 @@ import kotlinx.coroutines.delay
 fun AppTab(
     viewModel: LockViewModel,
     onNavigateToAddBlock: () -> Unit,
+    onNavigateToDnsLog: () -> Unit = {},
     permissionsGranted: Boolean = true,
     missingPermissions: List<String> = emptyList(),
     onRequestPermissions: () -> Unit = {}
@@ -86,7 +88,10 @@ fun AppTab(
                         }
                     )
                 } else {
-                    WebsiteFilterStatus(onStart = { viewModel.refreshServices() })
+                    WebsiteFilterStatus(
+                        onStart = { viewModel.refreshServices() },
+                        onOpenLog = onNavigateToDnsLog
+                    )
                 }
             }
 
@@ -174,7 +179,7 @@ private fun VpnConsentBanner(onGrant: () -> Unit) {
  * browsing means DNS is bypassing the filter (e.g. a strict Private DNS setting).
  */
 @Composable
-private fun WebsiteFilterStatus(onStart: () -> Unit) {
+private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
     var running by remember { mutableStateOf(WebsiteBlockingVpnService.isServiceRunning) }
     var seen by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesSeen.get()) }
     var blocked by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesBlocked.get()) }
@@ -191,7 +196,8 @@ private fun WebsiteFilterStatus(onStart: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(bottom = 16.dp),
+            .padding(bottom = 16.dp)
+            .clickable { onOpenLog() },
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
@@ -210,7 +216,7 @@ private fun WebsiteFilterStatus(onStart: () -> Unit) {
                             else MaterialTheme.colorScheme.error
                 )
                 Text(
-                    text = "$seen DNS lookups seen, $blocked blocked",
+                    text = "$seen DNS lookups seen, $blocked blocked. Tap to view the log.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
