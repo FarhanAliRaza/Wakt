@@ -133,7 +133,7 @@ fun DnsLogScreen(onNavigateBack: () -> Unit) {
 @Composable
 private fun DnsLogRow(entry: DnsLogEntry, timeFormat: SimpleDateFormat) {
     val actionColor = when (entry.action) {
-        "BLOCKED" -> Color(0xFFEF4444)
+        "BLOCKED", "BLOCKED-DOH" -> Color(0xFFEF4444)
         "CACHED" -> Color(0xFF3B82F6)
         "TIMEOUT" -> Color(0xFFF59E0B)
         else -> MaterialTheme.colorScheme.onSurfaceVariant

@@ -183,12 +183,14 @@ private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
     var running by remember { mutableStateOf(WebsiteBlockingVpnService.isServiceRunning) }
     var seen by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesSeen.get()) }
     var blocked by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesBlocked.get()) }
+    var dohBypass by remember { mutableStateOf(WebsiteBlockingVpnService.dohBypassDetected) }
 
     LaunchedEffect(Unit) {
         while (true) {
             running = WebsiteBlockingVpnService.isServiceRunning
             seen = WebsiteBlockingVpnService.queriesSeen.get()
             blocked = WebsiteBlockingVpnService.queriesBlocked.get()
+            dohBypass = WebsiteBlockingVpnService.dohBypassDetected
             delay(1000)
         }
     }
@@ -220,6 +222,16 @@ private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                dohBypass?.let { who ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "$who uses its own encrypted DNS, which bypasses website blocking. " +
+                            "Wakt is cutting that off so it falls back to normal DNS. If that app then " +
+                            "can't open any site, turn off \"Use secure DNS\" in its settings.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
             }
             if (!running) {
                 TextButton(onClick = onStart) { Text("Start") }

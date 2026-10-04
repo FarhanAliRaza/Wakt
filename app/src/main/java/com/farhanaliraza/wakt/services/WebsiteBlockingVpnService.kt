@@ -131,6 +131,44 @@ class WebsiteBlockingVpnService : VpnService() {
         val queriesSeen = AtomicInteger(0)
         val queriesBlocked = AtomicInteger(0)
 
+        /**
+         * Hostnames of DNS-over-HTTPS resolvers built into browsers (Chrome,
+         * Firefox, Edge, Brave...). A browser that resolves one of these is about
+         * to bypass system DNS entirely, so they are answered NXDOMAIN; with its
+         * DoH server unreachable the browser falls back to system DNS, where the
+         * website blocks apply. use-application-dns.net is Firefox's canary: an
+         * NXDOMAIN there tells Firefox to disable DoH on this network.
+         */
+        private val KNOWN_DOH_HOSTS = setOf(
+                "chrome.cloudflare-dns.com", "cloudflare-dns.com", "mozilla.cloudflare-dns.com",
+                "security.cloudflare-dns.com", "family.cloudflare-dns.com", "one.one.one.one",
+                "dns.google", "dns.google.com", "dns64.dns.google",
+                "dns.quad9.net", "dns9.quad9.net", "dns10.quad9.net", "dns11.quad9.net",
+                "doh.opendns.com", "doh.familyshield.opendns.com", "doh.sandbox.opendns.com",
+                "doh.cleanbrowsing.org", "dns.nextdns.io", "dns.adguard.com", "dns.adguard-dns.com",
+                "dns-family.adguard.com", "family.adguard-dns.com", "unfiltered.adguard-dns.com",
+                "dns.sb", "doh.dns.sb", "dns.alidns.com", "doh.pub", "dns.pub", "doh.360.cn",
+                "dns.controld.com", "freedns.controld.com", "dns.mullvad.net", "doh.mullvad.net",
+                "use-application-dns.net"
+        )
+
+        /** Well-known public resolver IPs that also serve DoH/DoT; routed into the TUN and reset. */
+        private val KNOWN_DOH_IPS = listOf(
+                "1.1.1.1", "1.0.0.1", "1.1.1.2", "1.0.0.2", "1.1.1.3", "1.0.0.3",
+                "104.16.248.249", "104.16.249.249", "104.16.132.229", "104.16.133.229",
+                "8.8.8.8", "8.8.4.4", "9.9.9.9", "149.112.112.112", "9.9.9.11", "149.112.112.11",
+                "208.67.222.222", "208.67.220.220", "208.67.222.123", "208.67.220.123",
+                "185.228.168.9", "185.228.169.9", "94.140.14.14", "94.140.15.15",
+                "94.140.14.15", "94.140.15.16", "76.76.2.0", "76.76.10.0"
+        )
+
+        /** "App (host)" of the last browser seen trying to use its own DoH resolver, or null. */
+        @Volatile var dohBypassDetected: String? = null
+            private set
+
+        private fun isDohHost(domain: String): Boolean =
+                KNOWN_DOH_HOSTS.any { domain == it || domain.endsWith(".$it") }
+
         private const val MAX_LOG_ENTRIES = 300
         private val logBuffer = ArrayDeque<DnsLogEntry>()
         private val _dnsLog = MutableStateFlow<List<DnsLogEntry>>(emptyList())
@@ -231,9 +269,21 @@ class WebsiteBlockingVpnService : VpnService() {
                 Log.w(TAG, "Cannot route upstream DNS $ip into the TUN", e)
             }
         }
+        // Public resolvers that browsers reach directly for DoH/DoT: pulled into
+        // the TUN so their TCP connections get reset and the browser falls back
+        // to system DNS. Plain port-53 queries to them are still answered.
+        for (ip in KNOWN_DOH_IPS) {
+            if (ip in targets) continue
+            try {
+                vpnBuilder.addRoute(ip, 32)
+                targets.add(ip)
+            } catch (e: Exception) {
+                Log.w(TAG, "Cannot route resolver $ip into the TUN", e)
+            }
+        }
         interceptedDnsTargets = targets
         diagnostics = "Upstream DNS: ${upstreamServers.joinToString { it.hostAddress ?: "?" }}\n" +
-                "Intercepting port 53 to: ${targets.joinToString()}\n" +
+                "Intercepting port 53 and resetting other traffic to ${targets.size} resolver IPs\n" +
                 "Excluded apps: ${globalSettingsManager.getVpnExcludedApps().ifEmpty { setOf("none") }.joinToString()}"
 
         // Cover ALL apps (so DNS blocking also stops apps like Instagram/TikTok,
@@ -502,10 +552,16 @@ class WebsiteBlockingVpnService : VpnService() {
         if (length < ipHeaderLength + 8) return
 
         val protocol = packet[9].toInt() and 0xFF
-        if (protocol != 17) return // Not UDP
-
         val destIpBytes = byteArrayOf(packet[16], packet[17], packet[18], packet[19])
         if (ipv4ToString(destIpBytes) !in interceptedDnsTargets) return
+
+        if (protocol == 6) {
+            // TCP to a resolver IP: DoH/DoT or TCP DNS. Reset it so the client
+            // fails fast and falls back to plain DNS instead of hanging.
+            sendTcpReset(packet, ipHeaderLength, length)
+            return
+        }
+        if (protocol != 17) return // Not UDP
 
         val udpOffset = ipHeaderLength
         val destPort =
@@ -537,6 +593,16 @@ class WebsiteBlockingVpnService : VpnService() {
         val appLabel = resolveAppLabel(srcIpBytes, srcPort, destIpBytes)
         val typeName = queryTypeName(question?.second)
         val logDomain = domain ?: "(unparseable query)"
+
+        // 0. Browser trying to find its DoH resolver: refuse, so it falls back
+        //    to system DNS (where the blocks below apply). Remember who, for the UI.
+        if (domain != null && isDohHost(domain)) {
+            dohBypassDetected = "${appLabel ?: "An app"} ($domain)"
+            Log.w(TAG, "DoH resolver lookup from ${appLabel ?: "unknown"}: $domain - refusing")
+            appendLog(DnsLogEntry(System.currentTimeMillis(), logDomain, typeName, "BLOCKED-DOH", appLabel, serverIpString))
+            writeDnsResponseToTun(buildDnsErrorResponse(dnsPayload, RCODE_NXDOMAIN), srcIpBytes, srcPort, destIpBytes)
+            return
+        }
 
         // 1. Blocked domain: answer NXDOMAIN immediately, nothing goes upstream
         if (domain != null && isDomainBlocked(domain)) {
@@ -872,6 +938,86 @@ class WebsiteBlockingVpnService : VpnService() {
             }
         } catch (e: Exception) {
             null
+        }
+    }
+
+    // ============== TCP RESET (for DoH / DoT / TCP DNS to resolver IPs) ==============
+
+    private fun readUInt32(buffer: ByteArray, offset: Int): Long =
+            ((buffer[offset].toLong() and 0xFF) shl 24) or
+                    ((buffer[offset + 1].toLong() and 0xFF) shl 16) or
+                    ((buffer[offset + 2].toLong() and 0xFF) shl 8) or
+                    (buffer[offset + 3].toLong() and 0xFF)
+
+    private fun writeUInt32(buffer: ByteArray, offset: Int, value: Long) {
+        buffer[offset] = (value ushr 24).toByte()
+        buffer[offset + 1] = (value ushr 16).toByte()
+        buffer[offset + 2] = (value ushr 8).toByte()
+        buffer[offset + 3] = value.toByte()
+    }
+
+    /** Answers a TCP segment with an RST so the sender gives up immediately (RFC 793 reset rules). */
+    private fun sendTcpReset(packet: ByteArray, ipHeaderLength: Int, length: Int) {
+        val output = tunOutput ?: return
+        val tcpOffset = ipHeaderLength
+        if (length < tcpOffset + 20) return
+
+        val flags = packet[tcpOffset + 13].toInt() and 0xFF
+        if (flags and 0x04 != 0) return // already a reset
+
+        val srcPort = ((packet[tcpOffset].toInt() and 0xFF) shl 8) or (packet[tcpOffset + 1].toInt() and 0xFF)
+        val dstPort = ((packet[tcpOffset + 2].toInt() and 0xFF) shl 8) or (packet[tcpOffset + 3].toInt() and 0xFF)
+        val seq = readUInt32(packet, tcpOffset + 4)
+        val ack = readUInt32(packet, tcpOffset + 8)
+        val dataOffset = ((packet[tcpOffset + 12].toInt() and 0xFF) ushr 4) * 4
+        val payloadLength = (length - tcpOffset - dataOffset).coerceAtLeast(0)
+        val synFinCount = (if (flags and 0x02 != 0) 1 else 0) + (if (flags and 0x01 != 0) 1 else 0)
+        val hasAck = flags and 0x10 != 0
+
+        val rstSeq = if (hasAck) ack else 0L
+        val rstAck = (seq + payloadLength + synFinCount) and 0xFFFFFFFFL
+        val rstFlags = if (hasAck) 0x04 else 0x14 // RST, or RST+ACK when the segment had no ACK
+
+        val reply = ByteArray(40)
+        // IPv4 header, addresses swapped
+        reply[0] = 0x45.toByte()
+        reply[2] = 0
+        reply[3] = 40
+        reply[6] = 0x40.toByte() // Don't fragment
+        reply[8] = 64.toByte()
+        reply[9] = 6.toByte()
+        System.arraycopy(packet, 16, reply, 12, 4) // src = original dest
+        System.arraycopy(packet, 12, reply, 16, 4) // dest = original src
+        val ipChecksum = ipv4HeaderChecksum(reply, 0, 20)
+        reply[10] = (ipChecksum shr 8).toByte()
+        reply[11] = (ipChecksum and 0xFF).toByte()
+
+        // TCP header, ports swapped
+        reply[20] = (dstPort shr 8).toByte()
+        reply[21] = (dstPort and 0xFF).toByte()
+        reply[22] = (srcPort shr 8).toByte()
+        reply[23] = (srcPort and 0xFF).toByte()
+        writeUInt32(reply, 24, rstSeq)
+        writeUInt32(reply, 28, rstAck)
+        reply[32] = 0x50.toByte() // data offset 5 words
+        reply[33] = rstFlags.toByte()
+        // window, checksum, urgent pointer stay 0 for now
+
+        // TCP checksum over pseudo-header + header
+        val pseudo = ByteArray(12 + 20)
+        System.arraycopy(reply, 12, pseudo, 0, 4)
+        System.arraycopy(reply, 16, pseudo, 4, 4)
+        pseudo[9] = 6.toByte()
+        pseudo[11] = 20.toByte()
+        System.arraycopy(reply, 20, pseudo, 12, 20)
+        val tcpChecksum = ipv4HeaderChecksum(pseudo, 0, pseudo.size)
+        reply[36] = (tcpChecksum shr 8).toByte()
+        reply[37] = (tcpChecksum and 0xFF).toByte()
+
+        try {
+            synchronized(tunWriteLock) { output.write(reply) }
+        } catch (e: Exception) {
+            if (isRunning) Log.e(TAG, "Failed to write TCP reset to TUN", e)
         }
     }
 
