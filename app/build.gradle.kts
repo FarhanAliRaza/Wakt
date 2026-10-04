@@ -45,7 +45,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            // Sign with the local keystore when it exists. On CI the keystore is
+            // absent, so the APK is left unsigned and the release workflow signs it.
+            if (rootProject.file("wakt-release.keystore").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
