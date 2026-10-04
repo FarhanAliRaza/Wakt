@@ -163,7 +163,7 @@ val launcherPackages = setOf(
 ## Development Notes
 
 - Overlays use Views (not Compose) because Compose doesn't render properly in overlay contexts
-- VPN service (WebsiteBlockingVpnService) is disabled for battery optimization
+- WebsiteBlockingVpnService blocks websites via a DNS-only VPN: it advertises a local DNS server (10.0.0.1) on the TUN with no default route, so only DNS queries are processed in userspace and browsing traffic/battery are unaffected. Queries are forwarded asynchronously (transaction-ID remapping + receiver thread), answered from a TTL cache when possible, and blocked domains get NXDOMAIN. Covers all apps except Wakt itself, so DNS blocks also stop the matching native apps. Requires one-time VPN consent (requested in AddBlockScreen); ServiceOptimizer starts/stops the service based on active website blocks. Caveat: strict Private DNS (DoT) bypasses it.
 - Allowed apps stored as comma-separated string in DB
 - Services use SupervisorJob for coroutine scope management
 - Database operations always on Dispatchers.IO

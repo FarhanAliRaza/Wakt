@@ -23,8 +23,6 @@
     <!-- Permission for special use foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     
-    <!-- Permissions for VPN service - disabled for battery optimization -->
-    <!-- <uses-permission android:name="android.permission.BIND_VPN_SERVICE" /> -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
@@ -136,8 +134,8 @@
                 android:value="Persistent overlay for brick session UI" />
         </service>
         
-        <!-- VPN service disabled for battery optimization - keeping for future use -->
-        <!--
+        <!-- DNS-only website blocking VPN. Only DNS queries are routed through
+             the TUN interface, so it has no impact on internet speed or battery. -->
         <service
             android:name=".services.WebsiteBlockingVpnService"
             android:enabled="true"
@@ -149,9 +147,8 @@
             </intent-filter>
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Website blocking VPN service" />
+                android:value="DNS-based website blocking filter" />
         </service>
-        -->
     </application>
 
 </manifest>

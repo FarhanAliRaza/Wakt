@@ -1,5 +1,8 @@
 package com.farhanaliraza.wakt.presentation.screens.addblock
 
+import android.net.VpnService
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -30,6 +33,26 @@ fun AddBlockScreen(onNavigateBack: () -> Unit, viewModel: AddBlockViewModel = hi
 
     LaunchedEffect(Unit) { viewModel.loadInstalledApps(context) }
 
+    // Website blocks use a local DNS-filtering VPN, which needs one-time user
+    // consent. The save proceeds regardless of the dialog result - accessibility
+    // based blocking still works without the VPN.
+    val vpnConsentLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            viewModel.saveSelectedItems()
+            onNavigateBack()
+        }
+
+    fun saveAndClose() {
+        val consentIntent =
+            if (uiState.websiteUrl.isNotBlank()) VpnService.prepare(context) else null
+        if (consentIntent != null) {
+            vpnConsentLauncher.launch(consentIntent)
+        } else {
+            viewModel.saveSelectedItems()
+            onNavigateBack()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -41,10 +64,7 @@ fun AddBlockScreen(onNavigateBack: () -> Unit, viewModel: AddBlockViewModel = hi
                 },
                 actions = {
                     IconButton(
-                        onClick = {
-                            viewModel.saveSelectedItems()
-                            onNavigateBack()
-                        },
+                        onClick = { saveAndClose() },
                         enabled = uiState.selectedApps.isNotEmpty() || uiState.websiteUrl.isNotBlank(),
                         modifier = if (uiState.selectedApps.isNotEmpty() || uiState.websiteUrl.isNotBlank()) {
                             Modifier.background(
@@ -214,7 +234,9 @@ private fun WebsitesTab(
         )
 
         Text(
-            text = "Note: You'll need to grant accessibility permissions for website blocking to work in browsers.",
+            text = "Websites are blocked at the DNS level, which also blocks the matching apps. " +
+                "You'll be asked to allow a VPN connection once - all filtering happens locally " +
+                "on your device, nothing is sent to a server and browsing speed is unaffected.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

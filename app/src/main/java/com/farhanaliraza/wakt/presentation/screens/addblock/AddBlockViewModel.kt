@@ -9,6 +9,7 @@ import com.farhanaliraza.wakt.data.database.entity.BlockType
 import com.farhanaliraza.wakt.data.database.entity.BlockedItem
 import com.farhanaliraza.wakt.data.database.entity.ChallengeType
 import com.farhanaliraza.wakt.utils.GlobalSettingsManager
+import com.farhanaliraza.wakt.utils.ServiceOptimizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,8 @@ import kotlinx.coroutines.withContext
 @HiltViewModel
 class AddBlockViewModel @Inject constructor(
     private val blockedItemDao: BlockedItemDao,
-    private val globalSettingsManager: GlobalSettingsManager
+    private val globalSettingsManager: GlobalSettingsManager,
+    private val serviceOptimizer: ServiceOptimizer
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddBlockUiState())
@@ -225,6 +227,9 @@ class AddBlockViewModel @Inject constructor(
                         )
                 blockedItemDao.insertBlockedItem(blockedItem)
             }
+
+            // Start the DNS-filtering VPN if a website block now exists
+            serviceOptimizer.optimizeServices()
         }
     }
 }
