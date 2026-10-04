@@ -625,8 +625,9 @@ class AppBlockingService : AccessibilityService() {
                 val hasBlock = blockedApp != null || goalBlock != null || scheduledBlock != null
 
                 if (hasBlock) {
-                    // Check if temporarily unlocked
-                    if (temporaryUnlock.isTemporarilyUnlocked(packageName)) {
+                    val isLocked = blockedApp?.isCommitmentLocked() == true
+                    // Check if temporarily unlocked (never for commitment-locked blocks)
+                    if (!isLocked && temporaryUnlock.isTemporarilyUnlocked(packageName)) {
                         Log.d(TAG, "App $packageName is temporarily unlocked")
                         return@launch
                     }
@@ -659,7 +660,10 @@ class AppBlockingService : AccessibilityService() {
                         calculateScheduleEndTime(scheduledBlock!!)
                     } else 0L
 
-                    triggerAppBlocking(name, packageName, challengeType, challengeData, isGoalBlock, isScheduledBlock, scheduleEndTime)
+                    triggerAppBlocking(
+                        name, packageName, challengeType, challengeData, isGoalBlock, isScheduledBlock,
+                        scheduleEndTime, isLocked, blockedApp?.lockExpiresAt ?: 0L
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error checking blocked apps", e)
@@ -740,8 +744,9 @@ class AppBlockingService : AccessibilityService() {
                 val activeBlock = blockedWebsite ?: goalBlock
                 
                 if (activeBlock != null) {
-                    // Check if temporarily unlocked
-                    if (temporaryUnlock.isTemporarilyUnlocked(url)) {
+                    val isLocked = blockedWebsite?.isCommitmentLocked() == true
+                    // Check if temporarily unlocked (never for commitment-locked blocks)
+                    if (!isLocked && temporaryUnlock.isTemporarilyUnlocked(url)) {
                         Log.d(TAG, "Website $url is temporarily unlocked")
                         return@launch
                     }
@@ -762,7 +767,10 @@ class AppBlockingService : AccessibilityService() {
                     val challengeData = if (blockedWebsite != null) blockedWebsite.challengeData else goalBlock!!.challengeData
                     val name = if (blockedWebsite != null) blockedWebsite.name else goalBlock!!.name
                     
-                    triggerWebsiteBlocking(name, url, browserPackage, challengeType, challengeData, isGoalBlock)
+                    triggerWebsiteBlocking(
+                        name, url, browserPackage, challengeType, challengeData, isGoalBlock,
+                        isLocked, blockedWebsite?.lockExpiresAt ?: 0L
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error checking blocked websites", e)
@@ -777,9 +785,11 @@ class AppBlockingService : AccessibilityService() {
         challengeData: String,
         isGoalBlock: Boolean = false,
         isScheduledBlock: Boolean = false,
-        scheduleEndTime: Long = 0L
+        scheduleEndTime: Long = 0L,
+        isLocked: Boolean = false,
+        lockExpiresAt: Long = 0L
     ) {
-        Log.d(TAG, "Triggering app blocking for: $appName ($packageName), scheduled=$isScheduledBlock")
+        Log.d(TAG, "Triggering app blocking for: $appName ($packageName), scheduled=$isScheduledBlock, locked=$isLocked")
 
         // First show blocking overlay
         val intent = Intent(this, BlockingOverlayActivity::class.java).apply {
@@ -792,6 +802,8 @@ class AppBlockingService : AccessibilityService() {
             putExtra("is_goal_block", isGoalBlock)
             putExtra("is_scheduled_block", isScheduledBlock)
             putExtra("schedule_end_time", scheduleEndTime)
+            putExtra("is_locked", isLocked)
+            putExtra("lock_expires_at", lockExpiresAt)
         }
         startActivity(intent)
 
@@ -805,7 +817,9 @@ class AppBlockingService : AccessibilityService() {
         browserPackage: String,
         challengeType: ChallengeType,
         challengeData: String,
-        isGoalBlock: Boolean = false
+        isGoalBlock: Boolean = false,
+        isLocked: Boolean = false,
+        lockExpiresAt: Long = 0L
     ) {
         Log.d(TAG, "Triggering website blocking for: $websiteName ($url) in $browserPackage")
         
@@ -822,6 +836,8 @@ class AppBlockingService : AccessibilityService() {
             putExtra("challenge_data", challengeData)
             putExtra("is_website_block", true)
             putExtra("is_goal_block", isGoalBlock)
+            putExtra("is_locked", isLocked)
+            putExtra("lock_expires_at", lockExpiresAt)
         }
         startActivity(intent)
     }

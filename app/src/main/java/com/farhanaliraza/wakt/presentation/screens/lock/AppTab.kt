@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -24,9 +25,16 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.farhanaliraza.wakt.data.database.entity.BlockType
 import com.farhanaliraza.wakt.data.database.entity.BlockedItem
+import com.farhanaliraza.wakt.presentation.components.LockBlockDialog
 import com.farhanaliraza.wakt.presentation.components.PermissionWarningBanner
+import com.farhanaliraza.wakt.presentation.components.PinDialog
+import com.farhanaliraza.wakt.presentation.components.UnlockSessionDialog
 import com.farhanaliraza.wakt.services.WebsiteBlockingVpnService
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun AppTab(
@@ -38,8 +46,12 @@ fun AppTab(
     onRequestPermissions: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val sitesPinSet by viewModel.sitesPinSet.collectAsStateWithLifecycle()
+    val sitesRevealed by viewModel.sitesRevealed.collectAsStateWithLifecycle()
+    val sitesHidden = sitesPinSet && !sitesRevealed
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
 
     // Website blocks are enforced by the DNS-filtering VPN, which needs one-time
     // consent. VpnService.prepare() returns null once consent has been granted.
@@ -60,10 +72,20 @@ fun AppTab(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) refreshVpnState()
+            // Leaving the app re-hides the private site list
+            if (event == Lifecycle.Event.ON_STOP) viewModel.hideSites()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    // Dialog state
+    var lockTargets by remember { mutableStateOf<List<BlockedItem>?>(null) }
+    var unlockTarget by remember { mutableStateOf<BlockedItem?>(null) }
+    var showPinDialog by remember { mutableStateOf(false) }
+    var infoMessage by remember { mutableStateOf<String?>(null) }
+
+    val unlockedItems = uiState.blockedItems.filter { !it.isCommitmentLocked() }
 
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -95,6 +117,30 @@ fun AppTab(
                 }
             }
 
+            // Toolbar row: reveal hidden sites / lock everything
+            if (uiState.blockedItems.isNotEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (sitesHidden) {
+                        TextButton(onClick = { showPinDialog = true }) { Text("Reveal sites") }
+                    } else if (sitesPinSet) {
+                        TextButton(onClick = { viewModel.hideSites() }) { Text("Hide sites") }
+                    }
+                    if (unlockedItems.isNotEmpty()) {
+                        TextButton(onClick = { lockTargets = unlockedItems }) {
+                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(if (unlockedItems.size == uiState.blockedItems.size) "Lock all" else "Lock unlocked")
+                        }
+                    }
+                }
+            }
+
             // Main content
             if (uiState.blockedItems.isEmpty()) {
                 EmptyState(
@@ -105,7 +151,18 @@ fun AppTab(
             } else {
                 BlockedItemsList(
                     items = uiState.blockedItems,
+                    sitesHidden = sitesHidden,
                     onDeleteItem = { viewModel.deleteBlockedItem(it) },
+                    onLockItem = { lockTargets = listOf(it) },
+                    onUnlockEarly = { item ->
+                        when {
+                            !item.allowsEarlyUnlock() ->
+                                infoMessage = "This lock has no early unlock. It ends on ${formatDate(item.lockExpiresAt)}."
+                            item.unlockRequestedAt == null -> unlockTarget = item
+                            (item.unlockWaitRemainingMs() ?: 0L) > 0L -> unlockTarget = item
+                            else -> unlockTarget = item
+                        }
+                    },
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -122,6 +179,121 @@ fun AppTab(
             Icon(Icons.Default.Add, contentDescription = "Add Block")
         }
     }
+
+    // ============== DIALOGS ==============
+
+    lockTargets?.let { targets ->
+        LockBlockDialog(
+            title = if (targets.size == 1) "Lock \"${displayName(targets.first(), sitesHidden)}\"" else "Lock ${targets.size} blocks",
+            itemCount = targets.size,
+            onConfirm = { days, phrase ->
+                viewModel.lockItems(targets, days, phrase)
+                lockTargets = null
+            },
+            onDismiss = { lockTargets = null }
+        )
+    }
+
+    unlockTarget?.let { item ->
+        val remainingMs = item.unlockWaitRemainingMs()
+        when {
+            remainingMs == null -> {
+                // Step 1: start the cooling-off period
+                AlertDialog(
+                    onDismissRequest = { unlockTarget = null },
+                    title = { Text("Start early unlock?") },
+                    text = {
+                        Text(
+                            "This begins a 24-hour wait. After that you can type your commitment phrase " +
+                                "to remove the lock on \"${displayName(item, sitesHidden)}\". The block stays active meanwhile."
+                        )
+                    },
+                    confirmButton = {
+                        Button(onClick = {
+                            viewModel.requestEarlyUnlock(item)
+                            unlockTarget = null
+                        }) { Text("Start 24h wait") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { unlockTarget = null }) { Text("Keep my promise") }
+                    }
+                )
+            }
+            remainingMs > 0L -> {
+                // Step 2: still waiting
+                val hours = (remainingMs / 3_600_000L).toInt()
+                val minutes = ((remainingMs % 3_600_000L) / 60_000L).toInt()
+                AlertDialog(
+                    onDismissRequest = { unlockTarget = null },
+                    title = { Text("Still waiting") },
+                    text = { Text("You can type the phrase in ${hours}h ${minutes}m. The block stays active until then.") },
+                    confirmButton = {
+                        TextButton(onClick = { unlockTarget = null }) { Text("OK") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = {
+                            viewModel.cancelEarlyUnlock(item)
+                            unlockTarget = null
+                        }) { Text("Cancel request") }
+                    }
+                )
+            }
+            else -> {
+                // Step 3: wait is over, type the phrase
+                val remainingDays = (((item.lockExpiresAt ?: 0L) - System.currentTimeMillis()) / 86_400_000L).toInt()
+                UnlockSessionDialog(
+                    sessionName = displayName(item, sitesHidden),
+                    requiredPhrase = item.lockCommitmentPhrase ?: "",
+                    remainingDays = remainingDays.coerceAtLeast(0),
+                    onConfirm = {
+                        scope.launch {
+                            val ok = viewModel.unlockWithPhrase(item, item.lockCommitmentPhrase ?: "")
+                            infoMessage = if (ok) "Lock removed." else "Could not unlock."
+                            unlockTarget = null
+                        }
+                    },
+                    onDismiss = { unlockTarget = null }
+                )
+            }
+        }
+    }
+
+    if (showPinDialog) {
+        PinDialog(
+            title = "Private site list",
+            message = "Enter your PIN to show website names.",
+            onSubmit = { pin ->
+                val ok = viewModel.revealSites(pin)
+                if (ok) showPinDialog = false
+                ok
+            },
+            onDismiss = { showPinDialog = false }
+        )
+    }
+
+    infoMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { infoMessage = null },
+            text = { Text(message) },
+            confirmButton = { TextButton(onClick = { infoMessage = null }) { Text("OK") } }
+        )
+    }
+
+    uiState.error?.let { error ->
+        AlertDialog(
+            onDismissRequest = { viewModel.clearError() },
+            text = { Text(error) },
+            confirmButton = { TextButton(onClick = { viewModel.clearError() }) { Text("OK") } }
+        )
+    }
+}
+
+private fun displayName(item: BlockedItem, sitesHidden: Boolean): String =
+    if (sitesHidden && item.type == BlockType.WEBSITE) "Hidden website" else item.name
+
+private fun formatDate(millis: Long?): String {
+    if (millis == null) return "?"
+    return SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).format(Date(millis))
 }
 
 @Composable
@@ -184,6 +356,7 @@ private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
     var seen by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesSeen.get()) }
     var blocked by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesBlocked.get()) }
     var dohBypass by remember { mutableStateOf(WebsiteBlockingVpnService.dohBypassDetected) }
+    var avgMs by remember { mutableIntStateOf(WebsiteBlockingVpnService.averageUpstreamMs) }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -191,6 +364,7 @@ private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
             seen = WebsiteBlockingVpnService.queriesSeen.get()
             blocked = WebsiteBlockingVpnService.queriesBlocked.get()
             dohBypass = WebsiteBlockingVpnService.dohBypassDetected
+            avgMs = WebsiteBlockingVpnService.averageUpstreamMs
             delay(1000)
         }
     }
@@ -218,7 +392,9 @@ private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
                             else MaterialTheme.colorScheme.error
                 )
                 Text(
-                    text = "$seen DNS lookups seen, $blocked blocked. Tap to view the log.",
+                    text = "$seen DNS lookups seen, $blocked blocked" +
+                        (if (avgMs > 0) ", avg lookup $avgMs ms" else "") +
+                        ". Tap to view the log.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -265,7 +441,10 @@ private fun EmptyState(modifier: Modifier = Modifier) {
 @Composable
 private fun BlockedItemsList(
     items: List<BlockedItem>,
+    sitesHidden: Boolean,
     onDeleteItem: (BlockedItem) -> Unit,
+    onLockItem: (BlockedItem) -> Unit,
+    onUnlockEarly: (BlockedItem) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -279,7 +458,10 @@ private fun BlockedItemsList(
         ) { item ->
             BlockedItemCard(
                 item = item,
-                onDelete = { onDeleteItem(item) }
+                hidden = sitesHidden && item.type == BlockType.WEBSITE,
+                onDelete = { onDeleteItem(item) },
+                onLock = { onLockItem(item) },
+                onUnlockEarly = { onUnlockEarly(item) }
             )
         }
     }
@@ -288,8 +470,12 @@ private fun BlockedItemsList(
 @Composable
 private fun BlockedItemCard(
     item: BlockedItem,
-    onDelete: () -> Unit
+    hidden: Boolean,
+    onDelete: () -> Unit,
+    onLock: () -> Unit,
+    onUnlockEarly: () -> Unit
 ) {
+    val locked = item.isCommitmentLocked()
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -304,22 +490,40 @@ private fun BlockedItemCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = item.name,
+                    text = if (hidden) "Hidden website" else item.name,
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = "${item.type} - ${item.challengeType}",
+                    text = if (hidden) "WEBSITE" else "${item.type} - ${item.challengeType}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (locked) {
+                    val waiting = (item.unlockWaitRemainingMs() ?: 0L) > 0L
+                    Text(
+                        text = "Locked until ${formatDate(item.lockExpiresAt)}" +
+                            (if (waiting) " (unlock requested, waiting)" else ""),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
-            IconButton(onClick = onDelete) {
+            if (hidden) {
                 Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete"
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Hidden",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            } else if (locked) {
+                TextButton(onClick = onUnlockEarly) { Text("Unlock early") }
+            } else {
+                IconButton(onClick = onLock) {
+                    Icon(imageVector = Icons.Default.Lock, contentDescription = "Lock")
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete")
+                }
             }
         }
     }
 }
-

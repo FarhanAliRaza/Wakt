@@ -77,6 +77,8 @@ class WebsiteBlockingVpnService : VpnService() {
 
     /** Cleaned domain -> original identifier as stored in the DB (for TemporaryUnlock lookups). */
     @Volatile private var blockedDomains: Map<String, String> = emptyMap()
+    /** Cleaned domains under a commitment lock: challenge unlocks never apply. */
+    @Volatile private var lockedDomains: Set<String> = emptySet()
 
     @Volatile private var upstreamServers: List<InetAddress> = emptyList()
     /** Destination IPs whose port-53 traffic is handled by this filter (local fake DNS + real upstreams). */
@@ -161,6 +163,17 @@ class WebsiteBlockingVpnService : VpnService() {
                 "185.228.168.9", "185.228.169.9", "94.140.14.14", "94.140.15.15",
                 "94.140.14.15", "94.140.15.16", "76.76.2.0", "76.76.10.0"
         )
+
+        /** Exponential moving average of upstream reply time, so the UI can prove there is no slowdown. */
+        @Volatile var averageUpstreamMs: Int = 0
+            private set
+        @Volatile var cacheHits: Int = 0
+            private set
+
+        private fun recordUpstreamLatency(ms: Long) {
+            val current = averageUpstreamMs
+            averageUpstreamMs = if (current == 0) ms.toInt() else ((current * 7 + ms) / 8).toInt()
+        }
 
         /** "App (host)" of the last browser seen trying to use its own DoH resolver, or null. */
         @Volatile var dohBypassDetected: String? = null
@@ -408,6 +421,10 @@ class WebsiteBlockingVpnService : VpnService() {
             // Temporary unlocks are checked live per-query, so the full set stays
             // loaded and blocking resumes automatically when an unlock expires.
             blockedDomains = regularWebsites + goalItemWebsites + oldGoalWebsites
+            lockedDomains = blockedItemDao.getAllBlockedItemsList()
+                    .filter { it.type == BlockType.WEBSITE && it.isCommitmentLocked(currentTime) }
+                    .map { cleanDomain(it.packageNameOrUrl) }
+                    .toSet()
 
             Log.d(TAG, "Loaded ${blockedDomains.size} blocked websites: ${blockedDomains.keys}")
 
@@ -450,6 +467,7 @@ class WebsiteBlockingVpnService : VpnService() {
     private fun isDomainBlocked(domain: String): Boolean {
         for ((blocked, originalIdentifier) in blockedDomains) {
             if (domain == blocked || domain.endsWith(".$blocked")) {
+                if (blocked in lockedDomains) return true
                 val unlocked =
                         temporaryUnlock.isTemporarilyUnlocked(originalIdentifier) ||
                                 temporaryUnlock.isTemporarilyUnlocked(blocked)
@@ -487,6 +505,18 @@ class WebsiteBlockingVpnService : VpnService() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error resolving network DNS servers", e)
+        }
+        // Remember the network's own resolvers; when the VPN is already up on a
+        // restart they can be invisible, and the carrier's resolver is usually
+        // the closest and fastest one.
+        if (servers.isNotEmpty()) {
+            globalSettingsManager.setLastUpstreamDns(servers.mapNotNull { it.hostAddress })
+        } else {
+            for (remembered in globalSettingsManager.getLastUpstreamDns()) {
+                try {
+                    servers.add(InetAddress.getByName(remembered))
+                } catch (_: Exception) {}
+            }
         }
         for (fallback in FALLBACK_DNS) {
             try {
@@ -621,6 +651,7 @@ class WebsiteBlockingVpnService : VpnService() {
                 val reply = cached.payload.copyOf()
                 reply[0] = dnsPayload[0]
                 reply[1] = dnsPayload[1]
+                cacheHits++
                 appendLog(DnsLogEntry(System.currentTimeMillis(), logDomain, typeName, "CACHED", appLabel, serverIpString))
                 writeDnsResponseToTun(reply, srcIpBytes, srcPort, destIpBytes)
                 return
@@ -709,6 +740,8 @@ class WebsiteBlockingVpnService : VpnService() {
         if (length < 12) return
         val upstreamId = ((buffer[0].toInt() and 0xFF) shl 8) or (buffer[1].toInt() and 0xFF)
         val pending = pendingQueries.remove(upstreamId) ?: return
+
+        recordUpstreamLatency(System.currentTimeMillis() - pending.sentAtMs)
 
         val reply = buffer.copyOf(length)
         reply[0] = pending.originalTxnId0

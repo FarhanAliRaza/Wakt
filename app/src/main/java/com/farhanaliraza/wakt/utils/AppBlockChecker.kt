@@ -33,7 +33,9 @@ class AppBlockChecker @Inject constructor(
         val challengeData: String,
         val isGoalBlock: Boolean,
         val isScheduledBlock: Boolean,
-        val scheduleEndTime: Long
+        val scheduleEndTime: Long,
+        val isLocked: Boolean = false,
+        val lockExpiresAt: Long = 0L
     )
 
     /** Returns how to block [packageName], or null when it is allowed right now. */
@@ -55,7 +57,9 @@ class AppBlockChecker @Inject constructor(
         } else null
 
         if (blockedApp == null && goalBlock == null && scheduledBlock == null) return@withContext null
-        if (temporaryUnlock.isTemporarilyUnlocked(packageName)) return@withContext null
+        // A commitment-locked block ignores challenge unlocks entirely
+        val locked = blockedApp?.isCommitmentLocked() == true
+        if (!locked && temporaryUnlock.isTemporarilyUnlocked(packageName)) return@withContext null
 
         when {
             blockedApp != null -> Decision(
@@ -64,7 +68,9 @@ class AppBlockChecker @Inject constructor(
                 challengeData = blockedApp.challengeData,
                 isGoalBlock = false,
                 isScheduledBlock = false,
-                scheduleEndTime = 0L
+                scheduleEndTime = 0L,
+                isLocked = locked,
+                lockExpiresAt = blockedApp.lockExpiresAt ?: 0L
             )
             goalBlock != null -> Decision(
                 name = goalBlock.name,

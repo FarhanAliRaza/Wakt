@@ -27,7 +27,7 @@ import com.farhanaliraza.wakt.data.database.entity.BrickSessionLog
         EssentialApp::class,
         BrickSessionLog::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -201,6 +201,15 @@ abstract class WaktDatabase : RoomDatabase() {
                 database.execSQL("""
                     ALTER TABLE phone_brick_sessions ADD COLUMN lockCommitmentPhrase TEXT DEFAULT NULL
                 """)
+            }
+        }
+
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                // Commitment lock columns for individual blocks
+                database.execSQL("ALTER TABLE blocked_items ADD COLUMN lockExpiresAt INTEGER DEFAULT NULL")
+                database.execSQL("ALTER TABLE blocked_items ADD COLUMN lockCommitmentPhrase TEXT DEFAULT NULL")
+                database.execSQL("ALTER TABLE blocked_items ADD COLUMN unlockRequestedAt INTEGER DEFAULT NULL")
             }
         }
     }

@@ -9,6 +9,7 @@ import com.farhanaliraza.wakt.data.database.entity.BlockedItem
 import com.farhanaliraza.wakt.data.database.entity.BrickSessionType
 import com.farhanaliraza.wakt.data.database.entity.PhoneBrickSession
 import com.farhanaliraza.wakt.utils.BrickSessionManager
+import com.farhanaliraza.wakt.utils.GlobalSettingsManager
 import com.farhanaliraza.wakt.utils.PermissionHelper
 import com.farhanaliraza.wakt.utils.ServiceOptimizer
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -42,6 +43,7 @@ class LockViewModel @Inject constructor(
     private val phoneBrickSessionDao: PhoneBrickSessionDao,
     private val brickSessionManager: BrickSessionManager,
     private val serviceOptimizer: ServiceOptimizer,
+    private val globalSettingsManager: GlobalSettingsManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -202,8 +204,68 @@ class LockViewModel @Inject constructor(
 
     fun deleteBlockedItem(item: BlockedItem) {
         viewModelScope.launch {
-            blockedItemDao.deleteBlockedItem(item)
+            // Never delete through the UI while a commitment lock is in force
+            val current = blockedItemDao.getBlockedItemById(item.id) ?: return@launch
+            if (current.isCommitmentLocked()) {
+                _uiState.update { it.copy(error = "This block is locked until the commitment ends.") }
+                return@launch
+            }
+            blockedItemDao.deleteBlockedItem(current)
         }
+    }
+
+    // ============== COMMITMENT LOCKS ==============
+
+    /** Locks the given items for [durationDays]; a blank phrase means no early unlock is possible. */
+    fun lockItems(items: List<BlockedItem>, durationDays: Int, commitmentPhrase: String) {
+        viewModelScope.launch {
+            val expiresAt = System.currentTimeMillis() + durationDays.toLong() * 24L * 60 * 60 * 1000
+            val phrase = commitmentPhrase.trim().ifBlank { null }
+            for (item in items) {
+                blockedItemDao.lockItem(item.id, expiresAt, phrase)
+            }
+        }
+    }
+
+    /** Starts the cooling-off period before the phrase may be typed. */
+    fun requestEarlyUnlock(item: BlockedItem) {
+        viewModelScope.launch {
+            blockedItemDao.setUnlockRequested(item.id, System.currentTimeMillis())
+        }
+    }
+
+    fun cancelEarlyUnlock(item: BlockedItem) {
+        viewModelScope.launch {
+            blockedItemDao.setUnlockRequested(item.id, null)
+        }
+    }
+
+    /** Completes an early unlock once the wait is over and the phrase matches. */
+    suspend fun unlockWithPhrase(item: BlockedItem, typedPhrase: String): Boolean {
+        val current = blockedItemDao.getBlockedItemById(item.id) ?: return false
+        if (!current.allowsEarlyUnlock()) return false
+        val remaining = current.unlockWaitRemainingMs() ?: return false
+        if (remaining > 0) return false
+        if (current.lockCommitmentPhrase != typedPhrase) return false
+        blockedItemDao.unlockItem(current.id)
+        return true
+    }
+
+    // ============== PRIVATE SITE LIST ==============
+
+    private val _sitesRevealed = MutableStateFlow(false)
+    /** Website entries are shown in full only while this is true (or no PIN is set). */
+    val sitesRevealed: StateFlow<Boolean> = _sitesRevealed.asStateFlow()
+    val sitesPinSet: StateFlow<Boolean> = globalSettingsManager.sitesPinSet
+
+    fun revealSites(pin: String): Boolean {
+        val ok = globalSettingsManager.verifySitesPin(pin)
+        if (ok) _sitesRevealed.value = true
+        return ok
+    }
+
+    fun hideSites() {
+        _sitesRevealed.value = false
     }
 
     fun clearError() {

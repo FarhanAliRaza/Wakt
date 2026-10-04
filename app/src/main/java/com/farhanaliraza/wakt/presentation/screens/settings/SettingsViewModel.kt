@@ -22,6 +22,11 @@ class SettingsViewModel @Inject constructor(
     val defaultAllowedApps: StateFlow<Set<String>> = globalSettingsManager.defaultAllowedApps
     val emergencyExitEnabled: StateFlow<Boolean> = globalSettingsManager.emergencyExitEnabled
     val vpnExcludedApps: StateFlow<Set<String>> = globalSettingsManager.vpnExcludedApps
+    val sitesPinSet: StateFlow<Boolean> = globalSettingsManager.sitesPinSet
+
+    fun setSitesPin(pin: String) = globalSettingsManager.setSitesPin(pin)
+    fun verifySitesPin(pin: String): Boolean = globalSettingsManager.verifySitesPin(pin)
+    fun clearSitesPin() = globalSettingsManager.clearSitesPin()
 
     fun setVpnExcludedApps(apps: Set<String>) {
         globalSettingsManager.setVpnExcludedApps(apps)

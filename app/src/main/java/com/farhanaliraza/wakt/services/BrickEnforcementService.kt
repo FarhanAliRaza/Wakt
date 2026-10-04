@@ -280,6 +280,8 @@ class BrickEnforcementService : Service() {
             putExtra("is_goal_block", decision.isGoalBlock)
             putExtra("is_scheduled_block", decision.isScheduledBlock)
             putExtra("schedule_end_time", decision.scheduleEndTime)
+            putExtra("is_locked", decision.isLocked)
+            putExtra("lock_expires_at", decision.lockExpiresAt)
         }
         try {
             startActivity(intent)

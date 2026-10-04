@@ -17,6 +17,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -183,7 +184,13 @@ fun MainScaffold(
             }
 
             composable("dns_log") {
-                DnsLogScreen(onNavigateBack = { navController.popBackStack() })
+                val pinSet by lockViewModel.sitesPinSet.collectAsState()
+                val revealed by lockViewModel.sitesRevealed.collectAsState()
+                DnsLogScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    locked = pinSet && !revealed,
+                    onUnlock = { pin -> lockViewModel.revealSites(pin) }
+                )
             }
 
             composable("try_lock") {

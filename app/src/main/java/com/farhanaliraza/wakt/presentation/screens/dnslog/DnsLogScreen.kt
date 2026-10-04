@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.farhanaliraza.wakt.presentation.components.PinDialog
 import com.farhanaliraza.wakt.services.DnsLogEntry
 import com.farhanaliraza.wakt.services.WebsiteBlockingVpnService
 import kotlinx.coroutines.delay
@@ -33,7 +34,20 @@ import java.util.Locale
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DnsLogScreen(onNavigateBack: () -> Unit) {
+fun DnsLogScreen(
+    onNavigateBack: () -> Unit,
+    locked: Boolean = false,
+    onUnlock: (String) -> Boolean = { true }
+) {
+    if (locked) {
+        PinDialog(
+            title = "Private site list",
+            message = "The DNS log shows website names. Enter your PIN to view it.",
+            onSubmit = onUnlock,
+            onDismiss = onNavigateBack
+        )
+        return
+    }
     val context = LocalContext.current
     val entries by WebsiteBlockingVpnService.dnsLog.collectAsStateWithLifecycle()
 
@@ -85,7 +99,10 @@ fun DnsLogScreen(onNavigateBack: () -> Unit) {
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
                     Text(
-                        text = if (running) "Filter running" else "Filter not running",
+                        text = if (running) {
+                            "Filter running, avg lookup ${WebsiteBlockingVpnService.averageUpstreamMs} ms, " +
+                                "${WebsiteBlockingVpnService.cacheHits} answered from cache"
+                        } else "Filter not running",
                         style = MaterialTheme.typography.titleSmall,
                         color = if (running) Color(0xFF22C55E) else MaterialTheme.colorScheme.error
                     )

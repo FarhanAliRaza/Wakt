@@ -36,4 +36,15 @@ interface BlockedItemDao {
     
     @Query("DELETE FROM blocked_items WHERE blockEndTime IS NOT NULL AND blockEndTime <= :currentTime")
     suspend fun deleteExpiredBlocks(currentTime: Long = System.currentTimeMillis()): Int
+
+    // ============== COMMITMENT LOCK ==============
+
+    @Query("UPDATE blocked_items SET lockExpiresAt = :expiresAt, lockCommitmentPhrase = :phrase, unlockRequestedAt = NULL WHERE id = :id")
+    suspend fun lockItem(id: Long, expiresAt: Long, phrase: String?)
+
+    @Query("UPDATE blocked_items SET unlockRequestedAt = :requestedAt WHERE id = :id")
+    suspend fun setUnlockRequested(id: Long, requestedAt: Long?)
+
+    @Query("UPDATE blocked_items SET lockExpiresAt = NULL, lockCommitmentPhrase = NULL, unlockRequestedAt = NULL WHERE id = :id")
+    suspend fun unlockItem(id: Long)
 }

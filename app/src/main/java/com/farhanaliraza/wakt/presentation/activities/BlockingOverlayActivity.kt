@@ -55,6 +55,8 @@ class BlockingOverlayActivity : ComponentActivity() {
         val scheduleEndTime = intent.getLongExtra("schedule_end_time", 0L)
         val challengeTypeString = intent.getStringExtra("challenge_type") ?: "WAIT"
         val challengeData = intent.getStringExtra("challenge_data") ?: "10"
+        val isLocked = intent.getBooleanExtra("is_locked", false)
+        val lockExpiresAt = intent.getLongExtra("lock_expires_at", 0L)
 
         val challengeType = try {
             ChallengeType.valueOf(challengeTypeString)
@@ -82,6 +84,8 @@ class BlockingOverlayActivity : ComponentActivity() {
                     scheduleEndTime = scheduleEndTime,
                     challengeType = challengeType,
                     challengeData = challengeData,
+                    isLocked = isLocked,
+                    lockExpiresAt = lockExpiresAt,
                     onUnblockComplete = { minutes ->
                         val identifier = if (isWebsiteBlock) websiteUrl ?: packageName!! else packageName!!
                         temporaryUnlock.createTemporaryUnlock(identifier, minutes)
@@ -133,6 +137,8 @@ fun BlockingOverlayScreen(
     scheduleEndTime: Long = 0L,
     challengeType: ChallengeType,
     challengeData: String,
+    isLocked: Boolean = false,
+    lockExpiresAt: Long = 0L,
     onUnblockComplete: (Int) -> Unit,
     onCancel: () -> Unit,
     onScheduleEnded: () -> Unit = {},
@@ -260,7 +266,40 @@ fun BlockingOverlayScreen(
 
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                when (challengeType) {
+                if (isLocked) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f)
+                        )
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                "COMMITMENT LOCK",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = if (lockExpiresAt > 0) {
+                                    "You locked this block until " +
+                                        java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
+                                            .format(java.util.Date(lockExpiresAt)) +
+                                        ". No challenge can open it before then."
+                                } else {
+                                    "You locked this block. No challenge can open it."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                } else when (challengeType) {
                     ChallengeType.WAIT -> {
                         WaitTimerChallenge(
                             uiState = uiState,
