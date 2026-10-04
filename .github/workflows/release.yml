@@ -1,8 +1,11 @@
 name: Build & Release APK
 
 on:
-  release:
-    types: [created]
+  # Creating a release in the GitHub UI also pushes its tag, so this single
+  # trigger covers both "publish release in UI" and "git push <tag>".
+  push:
+    tags:
+      - '[0-9]+.[0-9]+*'
   workflow_dispatch:
     inputs:
       version:
@@ -48,13 +51,22 @@ jobs:
 
       - name: Rename APK
         run: |
-          VERSION=${{ github.event.inputs.version || github.event.release.tag_name || 'dev' }}
+          VERSION=${{ github.event.inputs.version || github.event.release.tag_name || (startsWith(github.ref, 'refs/tags/') && github.ref_name) || 'dev' }}
           mv ${{ steps.sign_app.outputs.signedReleaseFile }} app/build/outputs/apk/release/wakt-${VERSION}.apk
 
+      - name: Locate release notes
+        id: notes
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          NOTES=".github/release-notes/${{ github.ref_name }}.md"
+          if [ -f "$NOTES" ]; then echo "path=$NOTES" >> "$GITHUB_OUTPUT"; else echo "path=" >> "$GITHUB_OUTPUT"; fi
+
       - name: Upload APK to Release
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ github.ref_name }}
+          body_path: ${{ steps.notes.outputs.path }}
           files: app/build/outputs/apk/release/wakt-*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
