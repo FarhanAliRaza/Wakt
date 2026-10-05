@@ -115,7 +115,7 @@ object GoalWallpaperRenderer {
         // Vertical layout inside the slot: title / number / grid / status
         val headerHeight = titleSize * 1.6f + numberSize * 1.15f
         val statusHeight = labelSize * 2.4f
-        val contentHeight = headerHeight + 18f * unit + gridHeight + statusHeight
+        val contentHeight = headerHeight + 34f * unit + gridHeight + statusHeight
         var y = slotTop + (slotHeight - contentHeight) / 2f
 
         // Title
@@ -147,8 +147,8 @@ object GoalWallpaperRenderer {
             labelPaint
         )
 
-        // Contribution grid
-        y += 18f * unit
+        // Contribution grid (month labels sit just above it)
+        y += 34f * unit
         drawGrid(canvas, margin, y, cell, gap, weeks, data, today, now, unit)
         y += gridHeight
 
