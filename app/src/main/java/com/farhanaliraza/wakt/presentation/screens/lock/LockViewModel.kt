@@ -263,6 +263,9 @@ class LockViewModel @Inject constructor(
     private val _pausableAppsLoading = MutableStateFlow(false)
     val pausableAppsLoading: StateFlow<Boolean> = _pausableAppsLoading.asStateFlow()
 
+    /** Last mode, app and durations picked in the pause dialog. */
+    fun lastPauseChoice(): GlobalSettingsManager.PauseChoice = globalSettingsManager.getLastPauseChoice()
+
     fun loadPausableApps() {
         viewModelScope.launch {
             _pausableAppsLoading.value = true

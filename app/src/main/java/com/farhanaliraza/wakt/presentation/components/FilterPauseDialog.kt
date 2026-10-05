@@ -26,17 +26,30 @@ fun FilterPauseDialog(
     loading: Boolean,
     onConfirmPlain: (minutes: Int) -> Unit,
     onConfirmLock: (packageName: String, minutes: Int) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    initialLockMode: Boolean = false,
+    initialTargetPackage: String? = null,
+    initialPlainMinutes: Int = 2,
+    initialLockMinutes: Int = 5
 ) {
-    var lockMode by remember { mutableStateOf(false) }
+    var lockMode by remember { mutableStateOf(initialLockMode) }
     var query by remember { mutableStateOf("") }
-    var selected by remember { mutableStateOf<FilterPauseManager.PausableApp?>(null) }
-    var plainMinutes by remember { mutableIntStateOf(2) }
-    var lockMinutes by remember { mutableIntStateOf(5) }
+    // Remembered as a package name so the last pick survives the async app list load
+    var selectedPackage by remember { mutableStateOf(initialTargetPackage) }
+    var plainMinutes by remember {
+        mutableIntStateOf(initialPlainMinutes.takeIf { it in FilterPauseManager.PLAIN_DURATION_OPTIONS } ?: 2)
+    }
+    var lockMinutes by remember {
+        mutableIntStateOf(initialLockMinutes.takeIf { it in FilterPauseManager.LOCK_DURATION_OPTIONS } ?: 5)
+    }
+    val selected = apps.firstOrNull { it.packageName == selectedPackage }
 
-    val filtered = remember(apps, query) {
+    val filtered = remember(apps, query, selectedPackage) {
         val q = query.trim().lowercase()
-        if (q.isEmpty()) apps else apps.filter { it.label.lowercase().contains(q) || it.packageName.contains(q) }
+        val matches = if (q.isEmpty()) apps else apps.filter { it.label.lowercase().contains(q) || it.packageName.contains(q) }
+        // Keep the remembered app at the top so it is visible without scrolling
+        val pinned = matches.firstOrNull { it.packageName == selectedPackage }
+        if (pinned == null) matches else listOf(pinned) + matches.filter { it.packageName != pinned.packageName }
     }
 
     AlertDialog(
@@ -127,15 +140,15 @@ fun FilterPauseDialog(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             items(filtered, key = { it.packageName }) { app ->
-                                val isSelected = selected?.packageName == app.packageName
+                                val isSelected = selectedPackage == app.packageName
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable { selected = app }
+                                        .clickable { selectedPackage = app.packageName }
                                         .padding(vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    RadioButton(selected = isSelected, onClick = { selected = app })
+                                    RadioButton(selected = isSelected, onClick = { selectedPackage = app.packageName })
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(

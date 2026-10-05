@@ -139,6 +139,25 @@ class GlobalSettingsManager @Inject constructor(
         _vpnPause.value = pause
     }
 
+    /** What the user picked last time, so the pause dialog opens pre-filled. */
+    data class PauseChoice(val lockMode: Boolean, val targetPackage: String?, val plainMinutes: Int, val lockMinutes: Int)
+
+    fun getLastPauseChoice(): PauseChoice = PauseChoice(
+        lockMode = prefs.getBoolean(KEY_PAUSE_LAST_LOCK_MODE, false),
+        targetPackage = prefs.getString(KEY_PAUSE_LAST_TARGET, null)?.ifBlank { null },
+        plainMinutes = prefs.getInt(KEY_PAUSE_LAST_PLAIN_MIN, 2),
+        lockMinutes = prefs.getInt(KEY_PAUSE_LAST_LOCK_MIN, 5)
+    )
+
+    fun setLastPauseChoice(choice: PauseChoice) {
+        prefs.edit()
+            .putBoolean(KEY_PAUSE_LAST_LOCK_MODE, choice.lockMode)
+            .putString(KEY_PAUSE_LAST_TARGET, choice.targetPackage ?: "")
+            .putInt(KEY_PAUSE_LAST_PLAIN_MIN, choice.plainMinutes)
+            .putInt(KEY_PAUSE_LAST_LOCK_MIN, choice.lockMinutes)
+            .apply()
+    }
+
     fun clearVpnPause() {
         prefs.edit()
             .remove(KEY_VPN_PAUSE_UNTIL)
@@ -212,6 +231,10 @@ class GlobalSettingsManager @Inject constructor(
         private const val KEY_VPN_PAUSE_TARGET = "vpn_pause_target"
         private const val KEY_VPN_PAUSE_LABEL = "vpn_pause_label"
         private const val KEY_VPN_PAUSE_SESSION = "vpn_pause_session"
+        private const val KEY_PAUSE_LAST_LOCK_MODE = "pause_last_lock_mode"
+        private const val KEY_PAUSE_LAST_TARGET = "pause_last_target"
+        private const val KEY_PAUSE_LAST_PLAIN_MIN = "pause_last_plain_minutes"
+        private const val KEY_PAUSE_LAST_LOCK_MIN = "pause_last_lock_minutes"
         private const val DEFAULT_CLICK_COUNT = 500
         const val MIN_CLICK_COUNT = 100
         const val MAX_CLICK_COUNT = 1000

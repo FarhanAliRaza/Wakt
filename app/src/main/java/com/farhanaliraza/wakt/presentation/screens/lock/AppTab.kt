@@ -195,9 +195,14 @@ fun AppTab(
     // ============== DIALOGS ==============
 
     if (showPauseDialog) {
+        val last = remember { viewModel.lastPauseChoice() }
         FilterPauseDialog(
             apps = pausableApps,
             loading = pausableAppsLoading,
+            initialLockMode = last.lockMode,
+            initialTargetPackage = last.targetPackage,
+            initialPlainMinutes = last.plainMinutes,
+            initialLockMinutes = last.lockMinutes,
             onConfirmPlain = { minutes ->
                 showPauseDialog = false
                 viewModel.pauseFilter(minutes)

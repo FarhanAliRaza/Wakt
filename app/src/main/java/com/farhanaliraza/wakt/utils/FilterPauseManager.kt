@@ -103,6 +103,9 @@ class FilterPauseManager @Inject constructor(
         globalSettingsManager.setVpnPause(
             GlobalSettingsManager.VpnPause(until = until, targetPackage = "", targetLabel = "", sessionId = 0L)
         )
+        globalSettingsManager.setLastPauseChoice(
+            globalSettingsManager.getLastPauseChoice().copy(lockMode = false, plainMinutes = duration)
+        )
         VpnResumeReceiver.schedule(context, until)
         serviceOptimizer.optimizeServices()
         Log.i(TAG, "Website filter paused for $duration min (no lock)")
@@ -160,6 +163,9 @@ class FilterPauseManager @Inject constructor(
             withContext(Dispatchers.IO) { phoneBrickSessionDao.deleteSessionById(sessionId) }
             return PauseResult.Refused("Could not start the lock, so the filter stays on.")
         }
+        globalSettingsManager.setLastPauseChoice(
+            globalSettingsManager.getLastPauseChoice().copy(lockMode = true, targetPackage = packageName, lockMinutes = duration)
+        )
         VpnResumeReceiver.schedule(context, until)
         serviceOptimizer.optimizeServices()
         Log.i(TAG, "Website filter paused for $label ($packageName) for $duration min")
