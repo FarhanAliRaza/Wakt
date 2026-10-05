@@ -16,8 +16,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.farhanaliraza.wakt.data.database.entity.DailyGoal
-import com.farhanaliraza.wakt.utils.GoalWallpaperUpdater
+import com.farhanaliraza.wakt.utils.GoalWallpaperRenderer
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Daily promises with streak counters. Each goal is answered once a day, and
@@ -26,8 +38,17 @@ import com.farhanaliraza.wakt.utils.GoalWallpaperUpdater
 @Composable
 fun GoalsScreen(viewModel: GoalsViewModel = hiltViewModel()) {
     val rows by viewModel.rows.collectAsStateWithLifecycle()
-    val wallpaperEnabled by viewModel.wallpaperEnabled.collectAsStateWithLifecycle()
-    val wallpaperTarget by viewModel.wallpaperTarget.collectAsStateWithLifecycle()
+    val previewData by viewModel.previewData.collectAsStateWithLifecycle()
+    val wallpaperActive by viewModel.wallpaperActive.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshWallpaperState()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var showAddDialog by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<DailyGoal?>(null) }
@@ -57,10 +78,15 @@ fun GoalsScreen(viewModel: GoalsViewModel = hiltViewModel()) {
 
             item {
                 WallpaperCard(
-                    enabled = wallpaperEnabled,
-                    target = wallpaperTarget,
-                    onEnabledChange = { viewModel.setWallpaperEnabled(it) },
-                    onTargetChange = { viewModel.setWallpaperTarget(it) }
+                    previewData = previewData,
+                    active = wallpaperActive,
+                    onSetWallpaper = {
+                        try {
+                            context.startActivity(viewModel.wallpaperPickerIntent())
+                        } catch (e: Exception) {
+                            // No live wallpaper picker on this device
+                        }
+                    }
                 )
             }
 
@@ -143,45 +169,51 @@ fun GoalsScreen(viewModel: GoalsViewModel = hiltViewModel()) {
 
 @Composable
 private fun WallpaperCard(
-    enabled: Boolean,
-    target: String,
-    onEnabledChange: (Boolean) -> Unit,
-    onTargetChange: (String) -> Unit
+    previewData: List<GoalWallpaperRenderer.GoalData>,
+    active: Boolean,
+    onSetWallpaper: () -> Unit
 ) {
+    // Render the same picture the live wallpaper draws, at phone proportions
+    val preview by produceState<ImageBitmap?>(initialValue = null, previewData) {
+        value = withContext(Dispatchers.Default) {
+            val bitmap = Bitmap.createBitmap(540, 1170, Bitmap.Config.ARGB_8888)
+            GoalWallpaperRenderer.render(Canvas(bitmap), bitmap.width, bitmap.height, previewData)
+            bitmap.asImageBitmap()
+        }
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
+                preview?.let { image ->
+                    Image(
+                        bitmap = image,
+                        contentDescription = "Wallpaper preview",
+                        modifier = Modifier
+                            .width(96.dp)
+                            .height(208.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                    )
+                    Spacer(modifier = Modifier.width(16.dp))
+                }
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Show streaks on wallpaper",
+                        text = if (active) "Streak wallpaper is on" else "Streaks on your wallpaper",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "Paints \"Day N\" for each goal onto your wallpaper and repaints it after midnight, so you see it without opening Wakt. Replaces your current wallpaper.",
+                        text = "Your streak and a day-by-day grid, drawn on the device as a live wallpaper. " +
+                            "It redraws after every check-in and at midnight, so you see where you stand without opening Wakt.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Switch(checked = enabled, onCheckedChange = onEnabledChange)
-            }
-            if (enabled) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        GoalWallpaperUpdater.TARGET_LOCK to "Lock screen",
-                        GoalWallpaperUpdater.TARGET_HOME to "Home",
-                        GoalWallpaperUpdater.TARGET_BOTH to "Both"
-                    ).forEach { (value, label) ->
-                        FilterChip(
-                            selected = target == value,
-                            onClick = { onTargetChange(value) },
-                            label = { Text(label) }
-                        )
+                    Button(onClick = onSetWallpaper) {
+                        Text(if (active) "Change placement" else "Set as wallpaper")
                     }
                 }
             }

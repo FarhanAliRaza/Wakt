@@ -16,8 +16,8 @@
     <!-- Restore enforcement services after a reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Daily goal streaks painted onto the wallpaper (optional feature) -->
-    <uses-permission android:name="android.permission.SET_WALLPAPER" />
+    <!-- Daily goal streaks as a live wallpaper (optional feature) -->
+    <uses-feature android:name="android.software.live_wallpaper" android:required="false" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 
     <!-- Permission to request battery optimization exemption (prevents service from being killed) -->
@@ -145,6 +145,20 @@
                 android:value="Persistent overlay for brick session UI" />
         </service>
         
+        <!-- Goal streak live wallpaper (set through the system wallpaper picker) -->
+        <service
+            android:name=".services.GoalWallpaperService"
+            android:exported="true"
+            android:label="Wakt Goals"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/goal_wallpaper" />
+        </service>
+
         <!-- Repaints the goal-streak wallpaper after midnight -->
         <receiver
             android:name=".receivers.GoalWallpaperReceiver"

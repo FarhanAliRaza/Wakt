@@ -7,7 +7,11 @@ import com.farhanaliraza.wakt.data.database.entity.DailyGoal
 import com.farhanaliraza.wakt.data.database.entity.GoalCheckIn
 import com.farhanaliraza.wakt.utils.GlobalSettingsManager
 import com.farhanaliraza.wakt.utils.GoalStreaks
+import com.farhanaliraza.wakt.utils.GoalWallpaperRenderer
 import com.farhanaliraza.wakt.utils.GoalWallpaperUpdater
+import android.content.Intent
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -47,8 +51,27 @@ class GoalsViewModel @Inject constructor(
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    val wallpaperEnabled: StateFlow<Boolean> = globalSettingsManager.goalWallpaperEnabled
-    val wallpaperTarget: StateFlow<String> = globalSettingsManager.goalWallpaperTarget
+    /** Data in the shape the wallpaper renderer wants, for the in-app preview. */
+    val previewData: StateFlow<List<GoalWallpaperRenderer.GoalData>> =
+        combine(dailyGoalDao.getActiveGoals(), dailyGoalDao.getAllCheckIns()) { goals, checkIns ->
+            val byGoal = checkIns.groupBy { it.goalId }
+            goals.filter { it.showOnWallpaper }.map { goal ->
+                GoalWallpaperRenderer.GoalData(
+                    goal = goal,
+                    checkIns = byGoal[goal.id]?.associate { it.day to it.success } ?: emptyMap()
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _wallpaperActive = MutableStateFlow(wallpaperUpdater.isLiveWallpaperActive())
+    val wallpaperActive: StateFlow<Boolean> = _wallpaperActive.asStateFlow()
+
+    fun refreshWallpaperState() {
+        _wallpaperActive.value = wallpaperUpdater.isLiveWallpaperActive()
+        if (_wallpaperActive.value) wallpaperUpdater.scheduleMidnightRefresh()
+    }
+
+    fun wallpaperPickerIntent(): Intent = wallpaperUpdater.pickerIntent()
 
     fun addGoal(title: String) {
         val trimmed = title.trim()
@@ -81,16 +104,4 @@ class GoalsViewModel @Inject constructor(
         }
     }
 
-    fun setWallpaperEnabled(enabled: Boolean) {
-        globalSettingsManager.setGoalWallpaperEnabled(enabled)
-        if (enabled) {
-            wallpaperUpdater.refresh()
-            wallpaperUpdater.scheduleMidnightRefresh()
-        }
-    }
-
-    fun setWallpaperTarget(target: String) {
-        globalSettingsManager.setGoalWallpaperTarget(target)
-        wallpaperUpdater.refresh()
-    }
 }

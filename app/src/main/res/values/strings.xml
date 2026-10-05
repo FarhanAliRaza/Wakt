@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">Wakt</string>
     <string name="action_settings">Settings</string>
+    <string name="goal_wallpaper_description">Your daily goal streaks, drawn on the device. Updates after each check-in and at midnight.</string>
     <string name="accessibility_service_description">Wakt monitors app launches to block access to apps you\'ve chosen to restrict. This helps you maintain focus and productivity by preventing access to distracting applications.</string>
     <!-- Strings used for fragments for navigation -->
     <string name="first_fragment_label">First Fragment</string>
