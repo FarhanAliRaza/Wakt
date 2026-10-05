@@ -25,11 +25,13 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.farhanaliraza.wakt.data.database.entity.BlockType
 import com.farhanaliraza.wakt.data.database.entity.BlockedItem
+import com.farhanaliraza.wakt.presentation.components.FilterPauseDialog
 import com.farhanaliraza.wakt.presentation.components.LockBlockDialog
 import com.farhanaliraza.wakt.presentation.components.PermissionWarningBanner
 import com.farhanaliraza.wakt.presentation.components.PinDialog
 import com.farhanaliraza.wakt.presentation.components.UnlockSessionDialog
 import com.farhanaliraza.wakt.services.WebsiteBlockingVpnService
+import com.farhanaliraza.wakt.utils.GlobalSettingsManager
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -83,7 +85,11 @@ fun AppTab(
     var lockTargets by remember { mutableStateOf<List<BlockedItem>?>(null) }
     var unlockTarget by remember { mutableStateOf<BlockedItem?>(null) }
     var showPinDialog by remember { mutableStateOf(false) }
+    var showPauseDialog by remember { mutableStateOf(false) }
     var infoMessage by remember { mutableStateOf<String?>(null) }
+    val vpnPause by viewModel.vpnPause.collectAsStateWithLifecycle()
+    val pausableApps by viewModel.pausableApps.collectAsStateWithLifecycle()
+    val pausableAppsLoading by viewModel.pausableAppsLoading.collectAsStateWithLifecycle()
 
     val unlockedItems = uiState.blockedItems.filter { !it.isCommitmentLocked() }
 
@@ -111,8 +117,14 @@ fun AppTab(
                     )
                 } else {
                     WebsiteFilterStatus(
+                        pause = vpnPause,
                         onStart = { viewModel.refreshServices() },
-                        onOpenLog = onNavigateToDnsLog
+                        onOpenLog = onNavigateToDnsLog,
+                        onPause = {
+                            viewModel.loadPausableApps()
+                            showPauseDialog = true
+                        },
+                        onResume = { viewModel.resumeFilterNow() }
                     )
                 }
             }
@@ -181,6 +193,18 @@ fun AppTab(
     }
 
     // ============== DIALOGS ==============
+
+    if (showPauseDialog) {
+        FilterPauseDialog(
+            apps = pausableApps,
+            loading = pausableAppsLoading,
+            onConfirm = { packageName, minutes ->
+                showPauseDialog = false
+                viewModel.pauseFilterFor(packageName, minutes)
+            },
+            onDismiss = { showPauseDialog = false }
+        )
+    }
 
     lockTargets?.let { targets ->
         LockBlockDialog(
@@ -351,7 +375,13 @@ private fun VpnConsentBanner(onGrant: () -> Unit) {
  * browsing means DNS is bypassing the filter (e.g. a strict Private DNS setting).
  */
 @Composable
-private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
+private fun WebsiteFilterStatus(
+    pause: GlobalSettingsManager.VpnPause?,
+    onStart: () -> Unit,
+    onOpenLog: () -> Unit,
+    onPause: () -> Unit,
+    onResume: () -> Unit
+) {
     var running by remember { mutableStateOf(WebsiteBlockingVpnService.isServiceRunning) }
     var seen by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesSeen.get()) }
     var blocked by remember { mutableIntStateOf(WebsiteBlockingVpnService.queriesBlocked.get()) }
@@ -385,19 +415,33 @@ private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (running) "Website filter: active" else "Website filter: not running",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = if (running) MaterialTheme.colorScheme.onSurface
-                            else MaterialTheme.colorScheme.error
-                )
-                Text(
-                    text = "$seen DNS lookups seen, $blocked blocked" +
-                        (if (avgMs > 0) ", avg lookup $avgMs ms" else "") +
-                        ". Tap to view the log.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (pause != null) {
+                    Text(
+                        text = "Website filter: paused for ${pause.targetLabel}",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.tertiary
+                    )
+                    Text(
+                        text = "Phone is locked to that app until ${formatTime(pause.until)}. " +
+                            "The filter comes back on its own when the lock ends.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Text(
+                        text = if (running) "Website filter: active" else "Website filter: not running",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (running) MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.error
+                    )
+                    Text(
+                        text = "$seen DNS lookups seen, $blocked blocked" +
+                            (if (avgMs > 0) ", avg lookup $avgMs ms" else "") +
+                            ". Tap to view the log.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 dohBypass?.let { who ->
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -409,12 +453,17 @@ private fun WebsiteFilterStatus(onStart: () -> Unit, onOpenLog: () -> Unit) {
                     )
                 }
             }
-            if (!running) {
-                TextButton(onClick = onStart) { Text("Start") }
+            when {
+                pause != null -> TextButton(onClick = onResume) { Text("Resume now") }
+                !running -> TextButton(onClick = onStart) { Text("Start") }
+                else -> TextButton(onClick = onPause) { Text("Pause") }
             }
         }
     }
 }
+
+private fun formatTime(millis: Long): String =
+    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(millis))
 
 @Composable
 private fun EmptyState(modifier: Modifier = Modifier) {

@@ -12,6 +12,7 @@ import com.farhanaliraza.wakt.data.database.dao.BrickSessionLogDao
 import com.farhanaliraza.wakt.data.database.entity.*
 import com.farhanaliraza.wakt.presentation.activities.BrickLauncherActivity
 import com.farhanaliraza.wakt.presentation.activities.ScheduleReminderActivity
+import com.farhanaliraza.wakt.receivers.VpnResumeReceiver
 import com.farhanaliraza.wakt.services.BrickEnforcementService
 import kotlinx.coroutines.*
 import java.util.*
@@ -24,7 +25,8 @@ class BrickSessionManager @Inject constructor(
     private val phoneBrickSessionDao: PhoneBrickSessionDao,
     private val brickSessionLogDao: BrickSessionLogDao,
     private val essentialAppsManager: EssentialAppsManager,
-    private val globalSettingsManager: GlobalSettingsManager
+    private val globalSettingsManager: GlobalSettingsManager,
+    private val serviceOptimizer: ServiceOptimizer
 ) {
     companion object {
         private const val TAG = "BrickSessionManager"
@@ -647,6 +649,15 @@ class BrickSessionManager @Inject constructor(
 
             // Stop overlay service
             com.farhanaliraza.wakt.services.BrickOverlayService.stop(context)
+
+            // A website-filter pause lives only as long as its lock: ending the
+            // lock (timer or early exit) brings the DNS filter straight back.
+            if (globalSettingsManager.getVpnPause() != null) {
+                Log.i(TAG, "Lock ended, resuming website filter")
+                globalSettingsManager.clearVpnPause()
+                VpnResumeReceiver.cancel(context)
+                serviceOptimizer.optimizeServices()
+            }
 
             // Send user back to normal home screen
             val homeIntent = Intent(Intent.ACTION_MAIN).apply {

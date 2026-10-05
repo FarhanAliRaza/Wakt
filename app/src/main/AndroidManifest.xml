@@ -165,6 +165,12 @@
             android:enabled="true"
             android:exported="false" />
 
+        <!-- Brings the DNS website filter back when a filter pause runs out -->
+        <receiver
+            android:name=".receivers.VpnResumeReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <!-- Restores the DNS filter and enforcement after reboot or app update -->
         <receiver
             android:name=".receivers.BootReceiver"
