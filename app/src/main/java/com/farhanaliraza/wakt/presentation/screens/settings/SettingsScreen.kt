@@ -19,6 +19,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -27,6 +30,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.farhanaliraza.wakt.R
 import com.farhanaliraza.wakt.utils.GlobalSettingsManager
+import com.farhanaliraza.wakt.presentation.components.PinDialog
+import com.farhanaliraza.wakt.presentation.components.SetPinDialog
+import com.farhanaliraza.wakt.utils.PermissionHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -37,8 +43,33 @@ fun SettingsScreen(
     val clickCount by viewModel.clickCount.collectAsState()
     val defaultAllowedApps by viewModel.defaultAllowedApps.collectAsState()
     val emergencyExitEnabled by viewModel.emergencyExitEnabled.collectAsState()
+    val vpnExcludedApps by viewModel.vpnExcludedApps.collectAsState()
+    val sitesPinSet by viewModel.sitesPinSet.collectAsState()
+    var showSetPinDialog by remember { mutableStateOf(false) }
+    var showRemovePinDialog by remember { mutableStateOf(false) }
+    var showChangePinDialog by remember { mutableStateOf(false) }
+    var pinVerifiedForChange by remember { mutableStateOf(false) }
 
     var showAppSelectorDialog by remember { mutableStateOf(false) }
+    var showVpnExclusionDialog by remember { mutableStateOf(false) }
+
+    // Permission status, refreshed whenever the user comes back from system settings
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var permissionRefresh by remember { mutableIntStateOf(0) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                permissionRefresh++
+                viewModel.refreshServices()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    val usageAccessGranted = remember(permissionRefresh) { PermissionHelper.isUsageAccessGranted(context) }
+    val overlayGranted = remember(permissionRefresh) { PermissionHelper.isOverlayPermissionGranted(context) }
+    val accessibilityEnabled = remember(permissionRefresh) { PermissionHelper.isAccessibilityServiceEnabled(context) }
 
     Column(
         modifier = Modifier
@@ -89,6 +120,71 @@ fun SettingsScreen(
                     checked = emergencyExitEnabled,
                     onCheckedChange = { viewModel.setEmergencyExitEnabled(it) }
                 )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Blocking Method Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Blocking Method",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Text(
+                    text = "Standard mode needs two permissions and keeps banking apps working. " +
+                        "The Accessibility Service is an optional upgrade: it reacts instantly and " +
+                        "blocks websites inside browsers, but many banking apps refuse to run while " +
+                        "any accessibility service is enabled.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                PermissionStatusRow(
+                    title = "Usage Access",
+                    subtitle = "Detects which app is open",
+                    granted = usageAccessGranted,
+                    actionLabel = "Grant",
+                    onAction = { PermissionHelper.requestUsageAccessPermission(context) }
+                )
+                PermissionStatusRow(
+                    title = "Display over other apps",
+                    subtitle = "Shows the lock and challenge screens",
+                    granted = overlayGranted,
+                    actionLabel = "Grant",
+                    onAction = { PermissionHelper.requestOverlayPermission(context) }
+                )
+                PermissionStatusRow(
+                    title = "Accessibility Service (optional)",
+                    subtitle = if (accessibilityEnabled) "Enhanced blocking on. Turn off before using banking apps."
+                               else "Enhanced blocking off",
+                    granted = accessibilityEnabled,
+                    actionLabel = if (accessibilityEnabled) "Turn off" else "Turn on",
+                    onAction = { PermissionHelper.requestAccessibilityPermission(context) }
+                )
+
+                PermissionHelper.getBackgroundPopupInstructions()?.let { instructions ->
+                    if (!accessibilityEnabled) {
+                        Text(
+                            text = "On this device also allow: $instructions",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         }
 
@@ -201,6 +297,102 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        // Private Site List Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Private Site List",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Hide the names of blocked websites and the DNS log behind a PIN, so someone looking at your phone cannot see what you blocked. Blocking keeps working while hidden.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (sitesPinSet) {
+                    Text(
+                        text = "PIN is set. Website names are hidden.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { pinVerifiedForChange = false; showChangePinDialog = true },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Change PIN") }
+                        OutlinedButton(
+                            onClick = { showRemovePinDialog = true },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Remove PIN") }
+                    }
+                } else {
+                    Button(
+                        onClick = { showSetPinDialog = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Set PIN") }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Website Filter Exclusions Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Apps Excluded From Website Filter",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Text(
+                    text = "Website blocking runs as a local DNS filter (a VPN). Some banking and payment apps refuse to work while a VPN is active. Exclude them here; their traffic bypasses the filter entirely.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (vpnExcludedApps.isNotEmpty()) {
+                    Text(
+                        text = "${vpnExcludedApps.size} app${if (vpnExcludedApps.size > 1) "s" else ""} excluded",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Button(
+                    onClick = { showVpnExclusionDialog = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (vpnExcludedApps.isEmpty()) "Choose Apps" else "Edit Apps")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
         // About Card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -239,6 +431,10 @@ fun SettingsScreen(
                     modifier = Modifier.padding(vertical = 4.dp),
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
                 )
+
+                TextButton(onClick = { viewModel.replayOnboarding() }) {
+                    Text("Show the intro and permission setup again")
+                }
 
                 // GitHub Link
                 Row(
@@ -321,6 +517,115 @@ fun SettingsScreen(
             }
         )
     }
+
+    if (showSetPinDialog) {
+        SetPinDialog(
+            title = "Set PIN",
+            onConfirm = { pin ->
+                viewModel.setSitesPin(pin)
+                showSetPinDialog = false
+            },
+            onDismiss = { showSetPinDialog = false }
+        )
+    }
+
+    if (showRemovePinDialog) {
+        PinDialog(
+            title = "Remove PIN",
+            message = "Enter the current PIN to stop hiding website names.",
+            confirmLabel = "Remove",
+            onSubmit = { pin ->
+                val ok = viewModel.verifySitesPin(pin)
+                if (ok) {
+                    viewModel.clearSitesPin()
+                    showRemovePinDialog = false
+                }
+                ok
+            },
+            onDismiss = { showRemovePinDialog = false }
+        )
+    }
+
+    if (showChangePinDialog) {
+        if (!pinVerifiedForChange) {
+            PinDialog(
+                title = "Change PIN",
+                message = "Enter the current PIN first.",
+                confirmLabel = "Next",
+                onSubmit = { pin ->
+                    val ok = viewModel.verifySitesPin(pin)
+                    if (ok) pinVerifiedForChange = true
+                    ok
+                },
+                onDismiss = { showChangePinDialog = false }
+            )
+        } else {
+            SetPinDialog(
+                title = "New PIN",
+                onConfirm = { pin ->
+                    viewModel.setSitesPin(pin)
+                    showChangePinDialog = false
+                },
+                onDismiss = { showChangePinDialog = false }
+            )
+        }
+    }
+
+    if (showVpnExclusionDialog) {
+        DefaultAllowedAppsSelectorDialog(
+            currentlySelected = vpnExcludedApps,
+            onDismiss = { showVpnExclusionDialog = false },
+            onAppsSelected = { selectedApps ->
+                viewModel.setVpnExcludedApps(selectedApps)
+                showVpnExclusionDialog = false
+            },
+            title = "Exclude From Website Filter",
+            subtitle = "These apps will not go through the DNS website filter"
+        )
+    }
+}
+
+@Composable
+private fun PermissionStatusRow(
+    title: String,
+    subtitle: String,
+    granted: Boolean,
+    actionLabel: String,
+    onAction: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        if (granted) {
+            Text(
+                text = "On",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color(0xFF22C55E),
+                fontWeight = FontWeight.SemiBold
+            )
+            if (actionLabel == "Turn off") {
+                Spacer(modifier = Modifier.width(8.dp))
+                TextButton(onClick = onAction) { Text(actionLabel) }
+            }
+        } else {
+            Button(onClick = onAction) { Text(actionLabel) }
+        }
+    }
 }
 
 private data class AppInfo(
@@ -332,7 +637,9 @@ private data class AppInfo(
 private fun DefaultAllowedAppsSelectorDialog(
     currentlySelected: Set<String>,
     onDismiss: () -> Unit,
-    onAppsSelected: (Set<String>) -> Unit
+    onAppsSelected: (Set<String>) -> Unit,
+    title: String = "Select Default Apps",
+    subtitle: String = "These apps will be pre-selected when creating new brick sessions"
 ) {
     var selectedApps by remember { mutableStateOf(currentlySelected) }
     var searchQuery by remember { mutableStateOf("") }
@@ -377,7 +684,7 @@ private fun DefaultAllowedAppsSelectorDialog(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "Select Default Apps",
+                    text = title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
@@ -385,7 +692,7 @@ private fun DefaultAllowedAppsSelectorDialog(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "These apps will be pre-selected when creating new brick sessions",
+                    text = subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

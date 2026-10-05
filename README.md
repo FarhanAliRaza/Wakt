@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo-app.png" alt="Wakt Logo" width="128" height="128">
+  <img src="logo-app-512.png" alt="Wakt Logo" width="180" height="180">
 </p>
 
 <h1 align="center">Wakt</h1>

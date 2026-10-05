@@ -23,6 +23,103 @@ class GlobalSettingsManager @Inject constructor(
     private val _emergencyExitEnabled = MutableStateFlow(isEmergencyExitEnabled())
     val emergencyExitEnabled: StateFlow<Boolean> = _emergencyExitEnabled.asStateFlow()
 
+    private val _vpnExcludedApps = MutableStateFlow(getVpnExcludedApps())
+    /** Apps kept off the DNS website filter, e.g. banking apps that refuse to run with a VPN. */
+    val vpnExcludedApps: StateFlow<Set<String>> = _vpnExcludedApps.asStateFlow()
+
+    // ============== PRIVATE SITE LIST (PIN) ==============
+
+    private val _sitesPinSet = MutableStateFlow(isSitesPinSet())
+    /** True when the website list is hidden behind a PIN. */
+    val sitesPinSet: StateFlow<Boolean> = _sitesPinSet.asStateFlow()
+
+    fun isSitesPinSet(): Boolean = !prefs.getString(KEY_SITES_PIN_HASH, null).isNullOrBlank()
+
+    fun setSitesPin(pin: String) {
+        prefs.edit().putString(KEY_SITES_PIN_HASH, hashPin(pin)).apply()
+        _sitesPinSet.value = true
+    }
+
+    fun clearSitesPin() {
+        prefs.edit().remove(KEY_SITES_PIN_HASH).apply()
+        _sitesPinSet.value = false
+    }
+
+    fun verifySitesPin(pin: String): Boolean {
+        val stored = prefs.getString(KEY_SITES_PIN_HASH, null) ?: return true
+        return stored == hashPin(pin)
+    }
+
+    private fun hashPin(pin: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val bytes = digest.digest("wakt-sites-pin:$pin".toByteArray(Charsets.UTF_8))
+        return bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    // ============== ONBOARDING ==============
+
+    private val _onboardingCompleted = MutableStateFlow(isOnboardingCompleted())
+    val onboardingCompleted: StateFlow<Boolean> = _onboardingCompleted.asStateFlow()
+
+    fun isOnboardingCompleted(): Boolean = prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+
+    fun setOnboardingCompleted(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed).apply()
+        _onboardingCompleted.value = completed
+    }
+
+    // ============== GOAL WALLPAPER ==============
+
+    private val _goalWallpaperEnabled = MutableStateFlow(isGoalWallpaperEnabled())
+    val goalWallpaperEnabled: StateFlow<Boolean> = _goalWallpaperEnabled.asStateFlow()
+    private val _goalWallpaperTarget = MutableStateFlow(getGoalWallpaperTarget())
+    val goalWallpaperTarget: StateFlow<String> = _goalWallpaperTarget.asStateFlow()
+
+    fun isGoalWallpaperEnabled(): Boolean = prefs.getBoolean(KEY_GOAL_WALLPAPER_ENABLED, false)
+
+    fun setGoalWallpaperEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GOAL_WALLPAPER_ENABLED, enabled).apply()
+        _goalWallpaperEnabled.value = enabled
+    }
+
+    private val _goalWallpaperShowTitles = MutableStateFlow(isGoalWallpaperShowTitles())
+    /** Whether goal names are drawn on the wallpaper (off = just the numbers and grid). */
+    val goalWallpaperShowTitles: StateFlow<Boolean> = _goalWallpaperShowTitles.asStateFlow()
+
+    fun isGoalWallpaperShowTitles(): Boolean = prefs.getBoolean(KEY_GOAL_WALLPAPER_TITLES, true)
+
+    fun setGoalWallpaperShowTitles(show: Boolean) {
+        prefs.edit().putBoolean(KEY_GOAL_WALLPAPER_TITLES, show).apply()
+        _goalWallpaperShowTitles.value = show
+    }
+
+    /** "lock", "home" or "both". */
+    fun getGoalWallpaperTarget(): String = prefs.getString(KEY_GOAL_WALLPAPER_TARGET, "lock") ?: "lock"
+
+    fun setGoalWallpaperTarget(target: String) {
+        prefs.edit().putString(KEY_GOAL_WALLPAPER_TARGET, target).apply()
+        _goalWallpaperTarget.value = target
+    }
+
+    fun getLastUpstreamDns(): List<String> {
+        val raw = prefs.getString(KEY_LAST_UPSTREAM_DNS, "") ?: ""
+        return raw.split(",").filter { it.isNotBlank() }
+    }
+
+    fun setLastUpstreamDns(servers: List<String>) {
+        prefs.edit().putString(KEY_LAST_UPSTREAM_DNS, servers.joinToString(",")).apply()
+    }
+
+    fun getVpnExcludedApps(): Set<String> {
+        val apps = prefs.getString(KEY_VPN_EXCLUDED_APPS, "") ?: ""
+        return if (apps.isBlank()) emptySet() else apps.split(",").filter { it.isNotBlank() }.toSet()
+    }
+
+    fun setVpnExcludedApps(apps: Set<String>) {
+        prefs.edit().putString(KEY_VPN_EXCLUDED_APPS, apps.joinToString(",")).apply()
+        _vpnExcludedApps.value = apps
+    }
+
     fun getClickCount(): Int {
         return prefs.getInt(KEY_CLICK_COUNT, DEFAULT_CLICK_COUNT)
     }
@@ -56,6 +153,13 @@ class GlobalSettingsManager @Inject constructor(
         private const val KEY_CLICK_COUNT = "click_count"
         private const val KEY_DEFAULT_ALLOWED_APPS = "default_allowed_apps"
         private const val KEY_EMERGENCY_EXIT_ENABLED = "emergency_exit_enabled"
+        private const val KEY_VPN_EXCLUDED_APPS = "vpn_excluded_apps"
+        private const val KEY_SITES_PIN_HASH = "sites_pin_hash"
+        private const val KEY_LAST_UPSTREAM_DNS = "last_upstream_dns"
+        private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
+        private const val KEY_GOAL_WALLPAPER_ENABLED = "goal_wallpaper_enabled"
+        private const val KEY_GOAL_WALLPAPER_TARGET = "goal_wallpaper_target"
+        private const val KEY_GOAL_WALLPAPER_TITLES = "goal_wallpaper_show_titles"
         private const val DEFAULT_CLICK_COUNT = 500
         const val MIN_CLICK_COUNT = 100
         const val MAX_CLICK_COUNT = 1000

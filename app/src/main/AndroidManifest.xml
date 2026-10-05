@@ -5,8 +5,19 @@
     <!-- Permission to query all installed packages on Android 11+ (required for app blocker functionality) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Permission for accessibility service (overlay uses TYPE_ACCESSIBILITY_OVERLAY - no separate permission needed) -->
+    <!-- Standard setup (no accessibility service, keeps banking apps working):
+         Usage Access detects the foreground app, overlay draws the lock screen. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Enhanced setup (optional): accessibility service reacts instantly and uses TYPE_ACCESSIBILITY_OVERLAY -->
     <uses-permission android:name="android.permission.BIND_ACCESSIBILITY_SERVICE" tools:ignore="ProtectedPermissions" />
+
+    <!-- Restore enforcement services after a reboot -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Daily goal streaks as a live wallpaper (optional feature) -->
+    <uses-feature android:name="android.software.live_wallpaper" android:required="false" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 
     <!-- Permission to request battery optimization exemption (prevents service from being killed) -->
@@ -23,8 +34,6 @@
     <!-- Permission for special use foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     
-    <!-- Permissions for VPN service - disabled for battery optimization -->
-    <!-- <uses-permission android:name="android.permission.BIND_VPN_SERVICE" /> -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
@@ -122,7 +131,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Focus session enforcement and overlay management" />
+                android:value="App blocking and focus session enforcement without accessibility" />
         </service>
 
         <!-- Brick Overlay Service - persistent overlay window for brick enforcement -->
@@ -136,8 +145,39 @@
                 android:value="Persistent overlay for brick session UI" />
         </service>
         
-        <!-- VPN service disabled for battery optimization - keeping for future use -->
-        <!--
+        <!-- Goal streak live wallpaper (set through the system wallpaper picker) -->
+        <service
+            android:name=".services.GoalWallpaperService"
+            android:exported="true"
+            android:label="Wakt Goals"
+            android:permission="android.permission.BIND_WALLPAPER">
+            <intent-filter>
+                <action android:name="android.service.wallpaper.WallpaperService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.wallpaper"
+                android:resource="@xml/goal_wallpaper" />
+        </service>
+
+        <!-- Repaints the goal-streak wallpaper after midnight -->
+        <receiver
+            android:name=".receivers.GoalWallpaperReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- Restores the DNS filter and enforcement after reboot or app update -->
+        <receiver
+            android:name=".receivers.BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- DNS-only website blocking VPN. Only DNS queries are routed through
+             the TUN interface, so it has no impact on internet speed or battery. -->
         <service
             android:name=".services.WebsiteBlockingVpnService"
             android:enabled="true"
@@ -149,9 +189,8 @@
             </intent-filter>
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Website blocking VPN service" />
+                android:value="DNS-based website blocking filter" />
         </service>
-        -->
     </application>
 
 </manifest>

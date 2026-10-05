@@ -8,24 +8,41 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import com.farhanaliraza.wakt.R
 import com.farhanaliraza.wakt.utils.BrickSessionManager
+import com.farhanaliraza.wakt.utils.EssentialAppsManager
+import com.farhanaliraza.wakt.utils.ForegroundAppDetector
+import com.farhanaliraza.wakt.utils.GlobalSettingsManager
+import com.farhanaliraza.wakt.utils.PermissionHelper
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 /**
- * Foreground service that maintains a notification during brick sessions.
- * NOTE: The actual overlay is now managed by AppBlockingService using TYPE_ACCESSIBILITY_OVERLAY,
- * which does not trigger the "app is overlaying other apps" system notification.
+ * Owns the brick-session lock screen when the accessibility service is NOT
+ * enabled: a foreground service that attaches [BrickOverlayController] as a
+ * TYPE_APPLICATION_OVERLAY window ("Display over other apps" permission).
+ *
+ * When the accessibility service IS connected, every request here is forwarded
+ * to it instead, because its TYPE_ACCESSIBILITY_OVERLAY window avoids the
+ * system's "displaying over other apps" notification. Callers never need to
+ * know which path is active.
  */
 @AndroidEntryPoint
 class BrickOverlayService : Service() {
 
-    @Inject
-    lateinit var brickSessionManager: BrickSessionManager
+    @Inject lateinit var brickSessionManager: BrickSessionManager
+    @Inject lateinit var essentialAppsManager: EssentialAppsManager
+    @Inject lateinit var globalSettingsManager: GlobalSettingsManager
+    @Inject lateinit var foregroundAppDetector: ForegroundAppDetector
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var overlay: BrickOverlayController? = null
 
     companion object {
         private const val TAG = "BrickOverlayService"
@@ -34,61 +51,71 @@ class BrickOverlayService : Service() {
 
         private var instance: BrickOverlayService? = null
 
-        // SINGLE SOURCE OF TRUTH: Should overlay be showing?
+        // SINGLE SOURCE OF TRUTH: Should the lock screen be showing?
         @Volatile
         var shouldOverlayBeShowing: Boolean = false
             private set
 
-        /**
-         * Request to show overlay - delegates to AppBlockingService which uses TYPE_ACCESSIBILITY_OVERLAY
-         */
+        /** Show the lock screen through whichever overlay path is available. */
         fun requestShowOverlay(context: Context) {
             shouldOverlayBeShowing = true
-            AppBlockingService.requestShowBrickOverlay()
+            if (AppBlockingService.isConnected()) {
+                AppBlockingService.requestShowBrickOverlay()
+            } else {
+                instance?.showOwnOverlay()
+            }
+            // Keeps the foreground service alive; shows the overlay once started if needed
             start(context)
-            Log.d(TAG, "Overlay requested - delegated to AppBlockingService")
+            Log.d(TAG, "Overlay requested (accessibility=${AppBlockingService.isConnected()})")
         }
 
-        /**
-         * Request to hide overlay - called when user launches allowed app
-         */
+        /** Hide the lock screen because the user launched an allowed app from it. */
         fun requestHideForAllowedApp() {
             shouldOverlayBeShowing = false
             AppBlockingService.requestHideBrickOverlayForAllowedApp()
+            instance?.hideOwnOverlay()
             Log.d(TAG, "Overlay hidden for allowed app launch")
         }
 
-        /**
-         * Request to hide overlay - called when session ends
-         */
+        /** Hide the lock screen because the session ended. */
         fun requestHideForSessionEnd() {
             shouldOverlayBeShowing = false
             AppBlockingService.requestHideBrickOverlayForSessionEnd()
+            instance?.hideOwnOverlay()
             Log.d(TAG, "Overlay hidden for session end")
         }
 
         fun shouldBeShowing(): Boolean = shouldOverlayBeShowing
 
         fun isPendingLaunch(packageName: String?): Boolean {
-            return AppBlockingService.isPendingBrickLaunch(packageName)
+            if (AppBlockingService.isPendingBrickLaunch(packageName)) return true
+            return instance?.overlay?.isPendingLaunch(packageName) == true
         }
 
         fun clearPendingLaunch() {
             AppBlockingService.clearPendingBrickLaunch()
+            instance?.overlay?.clearPendingLaunch()
         }
 
         fun start(context: Context) {
             val intent = Intent(context, BrickOverlayService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not start BrickOverlayService", e)
             }
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, BrickOverlayService::class.java)
-            context.stopService(intent)
+            try {
+                context.stopService(Intent(context, BrickOverlayService::class.java))
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not stop BrickOverlayService", e)
+            }
             Log.d(TAG, "BrickOverlayService stopped")
         }
     }
@@ -101,27 +128,62 @@ class BrickOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "BrickOverlayService started (foreground notification only)")
-
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 startForeground(NOTIFICATION_ID, createNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
             } else {
                 startForeground(NOTIFICATION_ID, createNotification())
             }
-            Log.d(TAG, "Started as foreground service")
         } catch (e: Exception) {
             Log.e(TAG, "Could not start as foreground service", e)
         }
 
         if (!brickSessionManager.isPhoneBricked()) {
             stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (shouldOverlayBeShowing && !AppBlockingService.isConnected()) {
+            showOwnOverlay()
         }
 
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun showOwnOverlay() {
+        mainHandler.post {
+            if (!brickSessionManager.isPhoneBricked()) return@post
+            if (!PermissionHelper.isOverlayPermissionGranted(this)) {
+                Log.w(TAG, "Cannot show lock screen: 'Display over other apps' permission missing")
+                return@post
+            }
+            if (overlay == null) {
+                @Suppress("DEPRECATION")
+                val windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    WindowManager.LayoutParams.TYPE_PHONE
+                }
+                overlay = BrickOverlayController(
+                    context = this,
+                    windowType = windowType,
+                    brickSessionManager = brickSessionManager,
+                    essentialAppsManager = essentialAppsManager,
+                    globalSettingsManager = globalSettingsManager,
+                    foregroundPackageProvider = { foregroundAppDetector.currentForegroundPackage() },
+                    onHideForAllowedApp = { requestHideForAllowedApp() },
+                    onSessionEnded = { requestHideForSessionEnd() }
+                )
+            }
+            overlay?.show()
+        }
+    }
+
+    private fun hideOwnOverlay() {
+        mainHandler.post { overlay?.hide() }
+    }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -134,7 +196,6 @@ class BrickOverlayService : Service() {
                 setShowBadge(false)
                 setSound(null, null)
             }
-
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             notificationManager.createNotificationChannel(channel)
         }
@@ -153,6 +214,8 @@ class BrickOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        overlay?.destroy()
+        overlay = null
         AppBlockingService.requestHideBrickOverlayForSessionEnd()
         instance = null
         shouldOverlayBeShowing = false

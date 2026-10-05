@@ -23,8 +23,8 @@ android {
         applicationId = "com.farhanaliraza.wakt"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.2"
+        versionCode = 14
+        versionName = "1.0.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -45,7 +45,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("release")
+            // Sign with the local keystore when it exists. On CI the keystore is
+            // absent, so the APK is left unsigned and the release workflow signs it.
+            if (rootProject.file("wakt-release.keystore").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
@@ -17,6 +18,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +39,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.farhanaliraza.wakt.presentation.components.PermissionDialog
 import com.farhanaliraza.wakt.presentation.screens.addblock.AddBlockScreen
+import com.farhanaliraza.wakt.presentation.screens.dnslog.DnsLogScreen
+import com.farhanaliraza.wakt.presentation.screens.goals.GoalsScreen
 import com.farhanaliraza.wakt.presentation.screens.lock.LockScreen
 import com.farhanaliraza.wakt.presentation.screens.lock.LockViewModel
 import com.farhanaliraza.wakt.presentation.screens.lock.TryLockScreen
@@ -55,6 +59,7 @@ data class BottomNavItem(
 
 val bottomNavItems = listOf(
     BottomNavItem("Lock", Icons.Outlined.Lock, "lock"),
+    BottomNavItem("Goals", Icons.Outlined.Star, "goals"),
     BottomNavItem("Schedule", Icons.Outlined.DateRange, "schedule"),
     BottomNavItem("Settings", Icons.Outlined.Settings, "settings")
 )
@@ -157,6 +162,7 @@ fun MainScaffold(
                             navController.navigate("add_block")
                         },
                         onNavigateToTryLock = { navController.navigate("try_lock") },
+                        onNavigateToDnsLog = { navController.navigate("dns_log") },
                         viewModel = lockViewModel,
                         selectedTab = lockScreenTab,
                         onTabChange = { lockScreenTab = it },
@@ -164,19 +170,30 @@ fun MainScaffold(
                         missingPermissions = missingPermissions,
                         onRequestPermissions = { showPermissionDialog = true }
                     )
-                    1 -> ScheduleScreen(
+                    1 -> GoalsScreen()
+                    2 -> ScheduleScreen(
                         onNavigateToAddSchedule = { isAppSchedule ->
                             navController.navigate("schedule_detail?isAppSchedule=$isAppSchedule")
                         },
                         onNavigateToEditSchedule = { id -> navController.navigate("schedule_detail/$id") }
                     )
-                    2 -> SettingsScreen()
+                    3 -> SettingsScreen()
                 }
             }
 
             composable("add_block") {
                 AddBlockScreen(
                     onNavigateBack = { navController.popBackStack() }
+                )
+            }
+
+            composable("dns_log") {
+                val pinSet by lockViewModel.sitesPinSet.collectAsState()
+                val revealed by lockViewModel.sitesRevealed.collectAsState()
+                DnsLogScreen(
+                    onNavigateBack = { navController.popBackStack() },
+                    locked = pinSet && !revealed,
+                    onUnlock = { pin -> lockViewModel.revealSites(pin) }
                 )
             }
 

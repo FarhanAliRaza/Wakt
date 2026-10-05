@@ -11,6 +11,7 @@ import com.farhanaliraza.wakt.data.database.dao.GoalBlockItemDao
 import com.farhanaliraza.wakt.data.database.dao.PhoneBrickSessionDao
 import com.farhanaliraza.wakt.data.database.dao.EssentialAppDao
 import com.farhanaliraza.wakt.data.database.dao.BrickSessionLogDao
+import com.farhanaliraza.wakt.data.database.dao.DailyGoalDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -38,7 +39,7 @@ object DatabaseModule {
             WaktDatabase::class.java,
             "wakt_database"
         )
-        .addMigrations(MIGRATION_1_2, WaktDatabase.MIGRATION_2_3, WaktDatabase.MIGRATION_3_4, WaktDatabase.MIGRATION_4_5, WaktDatabase.MIGRATION_5_6, WaktDatabase.MIGRATION_6_7, WaktDatabase.MIGRATION_7_8, WaktDatabase.MIGRATION_8_9)
+        .addMigrations(MIGRATION_1_2, WaktDatabase.MIGRATION_2_3, WaktDatabase.MIGRATION_3_4, WaktDatabase.MIGRATION_4_5, WaktDatabase.MIGRATION_5_6, WaktDatabase.MIGRATION_6_7, WaktDatabase.MIGRATION_7_8, WaktDatabase.MIGRATION_8_9, WaktDatabase.MIGRATION_9_10, WaktDatabase.MIGRATION_10_11)
         .fallbackToDestructiveMigration() // For development, remove in production
         .build()
     }
@@ -71,5 +72,10 @@ object DatabaseModule {
     @Provides
     fun provideBrickSessionLogDao(database: WaktDatabase): BrickSessionLogDao {
         return database.brickSessionLogDao()
+    }
+
+    @Provides
+    fun provideDailyGoalDao(database: WaktDatabase): DailyGoalDao {
+        return database.dailyGoalDao()
     }
 }

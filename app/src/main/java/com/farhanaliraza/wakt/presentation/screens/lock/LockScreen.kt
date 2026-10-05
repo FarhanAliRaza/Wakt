@@ -17,6 +17,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 fun LockScreen(
     onNavigateToAddBlock: () -> Unit,
     onNavigateToTryLock: () -> Unit,
+    onNavigateToDnsLog: () -> Unit = {},
     viewModel: LockViewModel = hiltViewModel(),
     selectedTab: Int = 0,
     onTabChange: (Int) -> Unit = {},
@@ -52,6 +53,7 @@ fun LockScreen(
             1 -> AppTab(
                 viewModel = viewModel,
                 onNavigateToAddBlock = onNavigateToAddBlock,
+                onNavigateToDnsLog = onNavigateToDnsLog,
                 permissionsGranted = permissionsGranted,
                 missingPermissions = missingPermissions,
                 onRequestPermissions = onRequestPermissions

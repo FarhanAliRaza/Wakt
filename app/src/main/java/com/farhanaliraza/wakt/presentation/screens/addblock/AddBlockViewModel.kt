@@ -9,6 +9,7 @@ import com.farhanaliraza.wakt.data.database.entity.BlockType
 import com.farhanaliraza.wakt.data.database.entity.BlockedItem
 import com.farhanaliraza.wakt.data.database.entity.ChallengeType
 import com.farhanaliraza.wakt.utils.GlobalSettingsManager
+import com.farhanaliraza.wakt.utils.ServiceOptimizer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
@@ -24,7 +25,8 @@ import kotlinx.coroutines.withContext
 @HiltViewModel
 class AddBlockViewModel @Inject constructor(
     private val blockedItemDao: BlockedItemDao,
-    private val globalSettingsManager: GlobalSettingsManager
+    private val globalSettingsManager: GlobalSettingsManager,
+    private val serviceOptimizer: ServiceOptimizer
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddBlockUiState())
@@ -77,6 +79,18 @@ class AddBlockViewModel @Inject constructor(
                             }
                         } catch (e: Exception) {
                             Log.e("AddBlockViewModel", "Error loading launcher apps", e)
+                        }
+
+                        // Common "trap" apps can be blocked in advance, before they are
+                        // (re)installed. The block applies the moment the app appears.
+                        for ((pkg, label) in TRAP_APP_CATALOG) {
+                            if (allApps.containsKey(pkg)) continue
+                            allApps[pkg] = AppInfo(
+                                    name = "$label (not installed)",
+                                    packageName = pkg,
+                                    icon = null,
+                                    iconBitmap = null
+                            )
                         }
 
                         val finalList = allApps.values.toList().sortedBy { it.name.lowercase() }
@@ -161,6 +175,34 @@ class AddBlockViewModel @Inject constructor(
         _uiState.update { it.copy(websiteUrl = url) }
     }
 
+    companion object {
+        /** Package name -> label of apps people most often want blocked, installed or not. */
+        private val TRAP_APP_CATALOG = listOf(
+                "com.instagram.android" to "Instagram",
+                "com.instagram.barcelona" to "Threads",
+                "com.zhiliaoapp.musically" to "TikTok",
+                "com.ss.android.ugc.trill" to "TikTok (Asia build)",
+                "com.facebook.katana" to "Facebook",
+                "com.facebook.lite" to "Facebook Lite",
+                "com.twitter.android" to "X (Twitter)",
+                "com.snapchat.android" to "Snapchat",
+                "com.google.android.youtube" to "YouTube",
+                "com.reddit.frontpage" to "Reddit",
+                "org.telegram.messenger" to "Telegram",
+                "com.discord" to "Discord",
+                "tv.twitch.android.app" to "Twitch",
+                "com.tumblr" to "Tumblr",
+                "com.pinterest" to "Pinterest",
+                "com.netflix.mediaclient" to "Netflix",
+                "video.like" to "Likee",
+                "sg.bigo.live" to "Bigo Live",
+                "com.kwai.video" to "Kwai",
+                "com.tinder" to "Tinder",
+                "com.bumble.app" to "Bumble",
+                "com.snackvideo.app" to "SnackVideo"
+        )
+    }
+
     private fun shouldIncludePackage(packageName: String): Boolean {
         val excludedPrefixes =
                 listOf(
@@ -214,9 +256,9 @@ class AddBlockViewModel @Inject constructor(
 
                 val blockedItem =
                         BlockedItem(
-                                name = state.websiteUrl,
+                                name = state.websiteUrl.trim().lowercase(),
                                 type = BlockType.WEBSITE,
-                                packageNameOrUrl = state.websiteUrl,
+                                packageNameOrUrl = state.websiteUrl.trim().lowercase(),
                                 challengeType = challengeType,
                                 challengeData = challengeData,
                                 blockDurationDays = 0,
@@ -225,6 +267,9 @@ class AddBlockViewModel @Inject constructor(
                         )
                 blockedItemDao.insertBlockedItem(blockedItem)
             }
+
+            // Start the DNS-filtering VPN if a website block now exists
+            serviceOptimizer.optimizeServices()
         }
     }
 }
