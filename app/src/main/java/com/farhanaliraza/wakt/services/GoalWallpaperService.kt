@@ -5,6 +5,7 @@ import android.service.wallpaper.WallpaperService
 import android.util.Log
 import android.view.SurfaceHolder
 import com.farhanaliraza.wakt.data.database.dao.DailyGoalDao
+import com.farhanaliraza.wakt.utils.GlobalSettingsManager
 import com.farhanaliraza.wakt.utils.GoalWallpaperRenderer
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,7 @@ import javax.inject.Inject
 class GoalWallpaperService : WallpaperService() {
 
     @Inject lateinit var dailyGoalDao: DailyGoalDao
+    @Inject lateinit var globalSettingsManager: GlobalSettingsManager
 
     companion object {
         private const val TAG = "GoalWallpaper"
@@ -91,7 +93,10 @@ class GoalWallpaperService : WallpaperService() {
             try {
                 canvas = holder.lockCanvas()
                 if (canvas != null) {
-                    GoalWallpaperRenderer.render(canvas, canvas.width, canvas.height, data)
+                    GoalWallpaperRenderer.render(
+                        canvas, canvas.width, canvas.height, data,
+                        showTitles = globalSettingsManager.isGoalWallpaperShowTitles()
+                    )
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to draw wallpaper", e)

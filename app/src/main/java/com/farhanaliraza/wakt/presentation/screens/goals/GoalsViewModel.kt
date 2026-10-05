@@ -73,6 +73,13 @@ class GoalsViewModel @Inject constructor(
 
     fun wallpaperPickerIntent(): Intent = wallpaperUpdater.pickerIntent()
 
+    val wallpaperShowTitles: StateFlow<Boolean> = globalSettingsManager.goalWallpaperShowTitles
+
+    fun setWallpaperShowTitles(show: Boolean) {
+        globalSettingsManager.setGoalWallpaperShowTitles(show)
+        wallpaperUpdater.refresh()
+    }
+
     fun addGoal(title: String) {
         val trimmed = title.trim()
         if (trimmed.isEmpty()) return

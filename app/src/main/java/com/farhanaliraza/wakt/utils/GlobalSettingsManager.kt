@@ -82,6 +82,17 @@ class GlobalSettingsManager @Inject constructor(
         _goalWallpaperEnabled.value = enabled
     }
 
+    private val _goalWallpaperShowTitles = MutableStateFlow(isGoalWallpaperShowTitles())
+    /** Whether goal names are drawn on the wallpaper (off = just the numbers and grid). */
+    val goalWallpaperShowTitles: StateFlow<Boolean> = _goalWallpaperShowTitles.asStateFlow()
+
+    fun isGoalWallpaperShowTitles(): Boolean = prefs.getBoolean(KEY_GOAL_WALLPAPER_TITLES, true)
+
+    fun setGoalWallpaperShowTitles(show: Boolean) {
+        prefs.edit().putBoolean(KEY_GOAL_WALLPAPER_TITLES, show).apply()
+        _goalWallpaperShowTitles.value = show
+    }
+
     /** "lock", "home" or "both". */
     fun getGoalWallpaperTarget(): String = prefs.getString(KEY_GOAL_WALLPAPER_TARGET, "lock") ?: "lock"
 
@@ -148,6 +159,7 @@ class GlobalSettingsManager @Inject constructor(
         private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
         private const val KEY_GOAL_WALLPAPER_ENABLED = "goal_wallpaper_enabled"
         private const val KEY_GOAL_WALLPAPER_TARGET = "goal_wallpaper_target"
+        private const val KEY_GOAL_WALLPAPER_TITLES = "goal_wallpaper_show_titles"
         private const val DEFAULT_CLICK_COUNT = 500
         const val MIN_CLICK_COUNT = 100
         const val MAX_CLICK_COUNT = 1000

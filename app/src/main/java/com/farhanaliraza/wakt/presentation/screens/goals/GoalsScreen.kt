@@ -40,6 +40,7 @@ fun GoalsScreen(viewModel: GoalsViewModel = hiltViewModel()) {
     val rows by viewModel.rows.collectAsStateWithLifecycle()
     val previewData by viewModel.previewData.collectAsStateWithLifecycle()
     val wallpaperActive by viewModel.wallpaperActive.collectAsStateWithLifecycle()
+    val wallpaperShowTitles by viewModel.wallpaperShowTitles.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -80,6 +81,8 @@ fun GoalsScreen(viewModel: GoalsViewModel = hiltViewModel()) {
                 WallpaperCard(
                     previewData = previewData,
                     active = wallpaperActive,
+                    showTitles = wallpaperShowTitles,
+                    onShowTitlesChange = { viewModel.setWallpaperShowTitles(it) },
                     onSetWallpaper = {
                         try {
                             context.startActivity(viewModel.wallpaperPickerIntent())
@@ -171,13 +174,15 @@ fun GoalsScreen(viewModel: GoalsViewModel = hiltViewModel()) {
 private fun WallpaperCard(
     previewData: List<GoalWallpaperRenderer.GoalData>,
     active: Boolean,
+    showTitles: Boolean,
+    onShowTitlesChange: (Boolean) -> Unit,
     onSetWallpaper: () -> Unit
 ) {
     // Render the same picture the live wallpaper draws, at phone proportions
-    val preview by produceState<ImageBitmap?>(initialValue = null, previewData) {
+    val preview by produceState<ImageBitmap?>(initialValue = null, previewData, showTitles) {
         value = withContext(Dispatchers.Default) {
             val bitmap = Bitmap.createBitmap(540, 1170, Bitmap.Config.ARGB_8888)
-            GoalWallpaperRenderer.render(Canvas(bitmap), bitmap.width, bitmap.height, previewData)
+            GoalWallpaperRenderer.render(Canvas(bitmap), bitmap.width, bitmap.height, previewData, showTitles = showTitles)
             bitmap.asImageBitmap()
         }
     }
@@ -216,6 +221,21 @@ private fun WallpaperCard(
                         Text(if (active) "Change placement" else "Set as wallpaper")
                     }
                 }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Show goal names",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Off keeps the wallpaper private: just the number and the grid.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(checked = showTitles, onCheckedChange = onShowTitlesChange)
             }
         }
     }

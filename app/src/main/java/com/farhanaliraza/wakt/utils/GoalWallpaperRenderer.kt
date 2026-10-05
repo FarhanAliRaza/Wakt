@@ -41,7 +41,14 @@ object GoalWallpaperRenderer {
     private val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     private val monthFormat = SimpleDateFormat("MMM", Locale.getDefault())
 
-    fun render(canvas: Canvas, width: Int, height: Int, goals: List<GoalData>, now: Long = System.currentTimeMillis()) {
+    fun render(
+        canvas: Canvas,
+        width: Int,
+        height: Int,
+        goals: List<GoalData>,
+        now: Long = System.currentTimeMillis(),
+        showTitles: Boolean = true
+    ) {
         val w = width.toFloat()
         val h = height.toFloat()
         val unit = w / 360f // everything scales with width (360 = a typical dp width)
@@ -66,7 +73,7 @@ object GoalWallpaperRenderer {
         val slot = (bottom - top) / shown.size
         val weeks = when (shown.size) { 1 -> 16; 2 -> 12; else -> 10 }
         shown.forEachIndexed { index, data ->
-            drawGoal(canvas, w, unit, top + slot * index, slot, data, weeks, now, compact = shown.size > 1)
+            drawGoal(canvas, w, unit, top + slot * index, slot, data, weeks, now, compact = shown.size > 1, showTitle = showTitles)
         }
         drawWordmark(canvas, w, h, unit)
     }
@@ -96,7 +103,8 @@ object GoalWallpaperRenderer {
         data: GoalData,
         weeks: Int,
         now: Long,
-        compact: Boolean
+        compact: Boolean,
+        showTitle: Boolean
     ) {
         val today = GoalStreaks.dayKey(now)
         val streak = GoalStreaks.currentStreak(data.checkIns, today)
@@ -113,7 +121,7 @@ object GoalWallpaperRenderer {
         val labelSize = 11f * unit
 
         // Vertical layout inside the slot: title / number / grid / status
-        val headerHeight = titleSize * 1.6f + numberSize * 1.15f
+        val headerHeight = (if (showTitle) titleSize * 1.6f else 0f) + numberSize * 1.15f
         val statusHeight = labelSize * 2.4f
         val contentHeight = headerHeight + 34f * unit + gridHeight + statusHeight
         var y = slotTop + (slotHeight - contentHeight) / 2f
@@ -123,8 +131,10 @@ object GoalWallpaperRenderer {
             textAlign = Paint.Align.CENTER
             letterSpacing = 0.12f
         }
-        y += titleSize * 1.2f
-        canvas.drawText(data.goal.title.uppercase(Locale.getDefault()), w / 2f, y, titlePaint)
+        if (showTitle) {
+            y += titleSize * 1.2f
+            canvas.drawText(data.goal.title.uppercase(Locale.getDefault()), w / 2f, y, titlePaint)
+        }
 
         // Flame + streak number + "DAY STREAK"
         val numberPaint = textPaint(TEXT, numberSize, bold = true)
