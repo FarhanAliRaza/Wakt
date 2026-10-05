@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.farhanaliraza.wakt.utils.BrickSessionManager
+import com.farhanaliraza.wakt.utils.GoalWallpaperUpdater
 import com.farhanaliraza.wakt.utils.ServiceOptimizer
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -18,6 +19,7 @@ import javax.inject.Inject
 class BootReceiver : BroadcastReceiver() {
 
     @Inject lateinit var serviceOptimizer: ServiceOptimizer
+    @Inject lateinit var goalWallpaperUpdater: GoalWallpaperUpdater
 
     // Injecting the manager constructs it, which resumes any ongoing session.
     @Inject lateinit var brickSessionManager: BrickSessionManager
@@ -27,6 +29,8 @@ class BootReceiver : BroadcastReceiver() {
         if (action != Intent.ACTION_BOOT_COMPLETED && action != Intent.ACTION_MY_PACKAGE_REPLACED) return
         Log.d(TAG, "Received $action, restoring enforcement services")
         serviceOptimizer.optimizeServices()
+        goalWallpaperUpdater.refresh()
+        goalWallpaperUpdater.scheduleMidnightRefresh()
     }
 
     companion object {

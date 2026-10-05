@@ -432,6 +432,10 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
                 )
 
+                TextButton(onClick = { viewModel.replayOnboarding() }) {
+                    Text("Show the intro and permission setup again")
+                }
+
                 // GitHub Link
                 Row(
                     modifier = Modifier

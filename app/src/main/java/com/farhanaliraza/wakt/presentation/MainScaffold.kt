@@ -7,6 +7,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.Icon
@@ -39,6 +40,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.farhanaliraza.wakt.presentation.components.PermissionDialog
 import com.farhanaliraza.wakt.presentation.screens.addblock.AddBlockScreen
 import com.farhanaliraza.wakt.presentation.screens.dnslog.DnsLogScreen
+import com.farhanaliraza.wakt.presentation.screens.goals.GoalsScreen
 import com.farhanaliraza.wakt.presentation.screens.lock.LockScreen
 import com.farhanaliraza.wakt.presentation.screens.lock.LockViewModel
 import com.farhanaliraza.wakt.presentation.screens.lock.TryLockScreen
@@ -57,6 +59,7 @@ data class BottomNavItem(
 
 val bottomNavItems = listOf(
     BottomNavItem("Lock", Icons.Outlined.Lock, "lock"),
+    BottomNavItem("Goals", Icons.Outlined.Star, "goals"),
     BottomNavItem("Schedule", Icons.Outlined.DateRange, "schedule"),
     BottomNavItem("Settings", Icons.Outlined.Settings, "settings")
 )
@@ -167,13 +170,14 @@ fun MainScaffold(
                         missingPermissions = missingPermissions,
                         onRequestPermissions = { showPermissionDialog = true }
                     )
-                    1 -> ScheduleScreen(
+                    1 -> GoalsScreen()
+                    2 -> ScheduleScreen(
                         onNavigateToAddSchedule = { isAppSchedule ->
                             navController.navigate("schedule_detail?isAppSchedule=$isAppSchedule")
                         },
                         onNavigateToEditSchedule = { id -> navController.navigate("schedule_detail/$id") }
                     )
-                    2 -> SettingsScreen()
+                    3 -> SettingsScreen()
                 }
             }
 

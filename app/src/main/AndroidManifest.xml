@@ -15,6 +15,9 @@
 
     <!-- Restore enforcement services after a reboot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- Daily goal streaks painted onto the wallpaper (optional feature) -->
+    <uses-permission android:name="android.permission.SET_WALLPAPER" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 
     <!-- Permission to request battery optimization exemption (prevents service from being killed) -->
@@ -142,6 +145,12 @@
                 android:value="Persistent overlay for brick session UI" />
         </service>
         
+        <!-- Repaints the goal-streak wallpaper after midnight -->
+        <receiver
+            android:name=".receivers.GoalWallpaperReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
         <!-- Restores the DNS filter and enforcement after reboot or app update -->
         <receiver
             android:name=".receivers.BootReceiver"

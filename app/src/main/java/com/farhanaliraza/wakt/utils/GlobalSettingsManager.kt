@@ -56,6 +56,40 @@ class GlobalSettingsManager @Inject constructor(
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
+    // ============== ONBOARDING ==============
+
+    private val _onboardingCompleted = MutableStateFlow(isOnboardingCompleted())
+    val onboardingCompleted: StateFlow<Boolean> = _onboardingCompleted.asStateFlow()
+
+    fun isOnboardingCompleted(): Boolean = prefs.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+
+    fun setOnboardingCompleted(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed).apply()
+        _onboardingCompleted.value = completed
+    }
+
+    // ============== GOAL WALLPAPER ==============
+
+    private val _goalWallpaperEnabled = MutableStateFlow(isGoalWallpaperEnabled())
+    val goalWallpaperEnabled: StateFlow<Boolean> = _goalWallpaperEnabled.asStateFlow()
+    private val _goalWallpaperTarget = MutableStateFlow(getGoalWallpaperTarget())
+    val goalWallpaperTarget: StateFlow<String> = _goalWallpaperTarget.asStateFlow()
+
+    fun isGoalWallpaperEnabled(): Boolean = prefs.getBoolean(KEY_GOAL_WALLPAPER_ENABLED, false)
+
+    fun setGoalWallpaperEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_GOAL_WALLPAPER_ENABLED, enabled).apply()
+        _goalWallpaperEnabled.value = enabled
+    }
+
+    /** "lock", "home" or "both". */
+    fun getGoalWallpaperTarget(): String = prefs.getString(KEY_GOAL_WALLPAPER_TARGET, "lock") ?: "lock"
+
+    fun setGoalWallpaperTarget(target: String) {
+        prefs.edit().putString(KEY_GOAL_WALLPAPER_TARGET, target).apply()
+        _goalWallpaperTarget.value = target
+    }
+
     fun getLastUpstreamDns(): List<String> {
         val raw = prefs.getString(KEY_LAST_UPSTREAM_DNS, "") ?: ""
         return raw.split(",").filter { it.isNotBlank() }
@@ -111,6 +145,9 @@ class GlobalSettingsManager @Inject constructor(
         private const val KEY_VPN_EXCLUDED_APPS = "vpn_excluded_apps"
         private const val KEY_SITES_PIN_HASH = "sites_pin_hash"
         private const val KEY_LAST_UPSTREAM_DNS = "last_upstream_dns"
+        private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
+        private const val KEY_GOAL_WALLPAPER_ENABLED = "goal_wallpaper_enabled"
+        private const val KEY_GOAL_WALLPAPER_TARGET = "goal_wallpaper_target"
         private const val DEFAULT_CLICK_COUNT = 500
         const val MIN_CLICK_COUNT = 100
         const val MAX_CLICK_COUNT = 1000

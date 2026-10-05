@@ -11,12 +11,15 @@ import com.farhanaliraza.wakt.data.database.dao.GoalBlockItemDao
 import com.farhanaliraza.wakt.data.database.dao.PhoneBrickSessionDao
 import com.farhanaliraza.wakt.data.database.dao.EssentialAppDao
 import com.farhanaliraza.wakt.data.database.dao.BrickSessionLogDao
+import com.farhanaliraza.wakt.data.database.dao.DailyGoalDao
 import com.farhanaliraza.wakt.data.database.entity.BlockedItem
 import com.farhanaliraza.wakt.data.database.entity.GoalBlock
 import com.farhanaliraza.wakt.data.database.entity.GoalBlockItem
 import com.farhanaliraza.wakt.data.database.entity.PhoneBrickSession
 import com.farhanaliraza.wakt.data.database.entity.EssentialApp
 import com.farhanaliraza.wakt.data.database.entity.BrickSessionLog
+import com.farhanaliraza.wakt.data.database.entity.DailyGoal
+import com.farhanaliraza.wakt.data.database.entity.GoalCheckIn
 
 @Database(
     entities = [
@@ -25,9 +28,11 @@ import com.farhanaliraza.wakt.data.database.entity.BrickSessionLog
         GoalBlockItem::class,
         PhoneBrickSession::class,
         EssentialApp::class,
-        BrickSessionLog::class
+        BrickSessionLog::class,
+        DailyGoal::class,
+        GoalCheckIn::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -38,6 +43,7 @@ abstract class WaktDatabase : RoomDatabase() {
     abstract fun phoneBrickSessionDao(): PhoneBrickSessionDao
     abstract fun essentialAppDao(): EssentialAppDao
     abstract fun brickSessionLogDao(): BrickSessionLogDao
+    abstract fun dailyGoalDao(): DailyGoalDao
     
     companion object {
         val MIGRATION_2_3 = object : Migration(2, 3) {
@@ -210,6 +216,30 @@ abstract class WaktDatabase : RoomDatabase() {
                 database.execSQL("ALTER TABLE blocked_items ADD COLUMN lockExpiresAt INTEGER DEFAULT NULL")
                 database.execSQL("ALTER TABLE blocked_items ADD COLUMN lockCommitmentPhrase TEXT DEFAULT NULL")
                 database.execSQL("ALTER TABLE blocked_items ADD COLUMN unlockRequestedAt INTEGER DEFAULT NULL")
+            }
+        }
+
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS daily_goals (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        title TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        isActive INTEGER NOT NULL DEFAULT 1,
+                        showOnWallpaper INTEGER NOT NULL DEFAULT 1,
+                        sortOrder INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS goal_check_ins (
+                        goalId INTEGER NOT NULL,
+                        day TEXT NOT NULL,
+                        success INTEGER NOT NULL,
+                        checkedAt INTEGER NOT NULL,
+                        PRIMARY KEY (goalId, day)
+                    )
+                """)
             }
         }
     }

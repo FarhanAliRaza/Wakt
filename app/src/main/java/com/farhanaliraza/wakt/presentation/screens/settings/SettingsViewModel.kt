@@ -28,6 +28,9 @@ class SettingsViewModel @Inject constructor(
     fun verifySitesPin(pin: String): Boolean = globalSettingsManager.verifySitesPin(pin)
     fun clearSitesPin() = globalSettingsManager.clearSitesPin()
 
+    /** Shows the first-run intro again on next composition. */
+    fun replayOnboarding() = globalSettingsManager.setOnboardingCompleted(false)
+
     fun setVpnExcludedApps(apps: Set<String>) {
         globalSettingsManager.setVpnExcludedApps(apps)
         serviceOptimizer.optimizeServices()
