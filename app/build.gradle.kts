@@ -17,14 +17,14 @@ val localProperties = Properties().apply {
 
 android {
     namespace = "com.farhanaliraza.wakt"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.farhanaliraza.wakt"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 17
-        versionName = "1.0.16"
+        targetSdk = 36
+        versionCode = 18
+        versionName = "1.0.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
