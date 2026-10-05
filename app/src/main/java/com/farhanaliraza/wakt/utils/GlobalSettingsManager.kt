@@ -101,6 +101,73 @@ class GlobalSettingsManager @Inject constructor(
         _goalWallpaperTarget.value = target
     }
 
+    // ============== WEBSITE FILTER PAUSE ==============
+
+    /**
+     * A temporary pause of the DNS website filter so a banking app that refuses
+     * to run with a VPN can be used. Either a short plain pause ([sessionId] is
+     * 0) or one tied to brick session [sessionId] that locks the phone to
+     * [targetPackage] for its duration.
+     */
+    data class VpnPause(val until: Long, val targetPackage: String, val targetLabel: String, val sessionId: Long) {
+        val locked: Boolean get() = sessionId != 0L
+    }
+
+    private val _vpnPause = MutableStateFlow(getVpnPause())
+    val vpnPause: StateFlow<VpnPause?> = _vpnPause.asStateFlow()
+
+    /** The current pause, or null when none is set or it has already expired. */
+    fun getVpnPause(now: Long = System.currentTimeMillis()): VpnPause? {
+        val until = prefs.getLong(KEY_VPN_PAUSE_UNTIL, 0L)
+        if (until <= now) return null
+        val target = prefs.getString(KEY_VPN_PAUSE_TARGET, "") ?: ""
+        return VpnPause(
+            until = until,
+            targetPackage = target,
+            targetLabel = prefs.getString(KEY_VPN_PAUSE_LABEL, target) ?: target,
+            sessionId = prefs.getLong(KEY_VPN_PAUSE_SESSION, 0L)
+        )
+    }
+
+    fun setVpnPause(pause: VpnPause) {
+        prefs.edit()
+            .putLong(KEY_VPN_PAUSE_UNTIL, pause.until)
+            .putString(KEY_VPN_PAUSE_TARGET, pause.targetPackage)
+            .putString(KEY_VPN_PAUSE_LABEL, pause.targetLabel)
+            .putLong(KEY_VPN_PAUSE_SESSION, pause.sessionId)
+            .apply()
+        _vpnPause.value = pause
+    }
+
+    /** What the user picked last time, so the pause dialog opens pre-filled. */
+    data class PauseChoice(val lockMode: Boolean, val targetPackage: String?, val plainMinutes: Int, val lockMinutes: Int)
+
+    fun getLastPauseChoice(): PauseChoice = PauseChoice(
+        lockMode = prefs.getBoolean(KEY_PAUSE_LAST_LOCK_MODE, false),
+        targetPackage = prefs.getString(KEY_PAUSE_LAST_TARGET, null)?.ifBlank { null },
+        plainMinutes = prefs.getInt(KEY_PAUSE_LAST_PLAIN_MIN, 2),
+        lockMinutes = prefs.getInt(KEY_PAUSE_LAST_LOCK_MIN, 5)
+    )
+
+    fun setLastPauseChoice(choice: PauseChoice) {
+        prefs.edit()
+            .putBoolean(KEY_PAUSE_LAST_LOCK_MODE, choice.lockMode)
+            .putString(KEY_PAUSE_LAST_TARGET, choice.targetPackage ?: "")
+            .putInt(KEY_PAUSE_LAST_PLAIN_MIN, choice.plainMinutes)
+            .putInt(KEY_PAUSE_LAST_LOCK_MIN, choice.lockMinutes)
+            .apply()
+    }
+
+    fun clearVpnPause() {
+        prefs.edit()
+            .remove(KEY_VPN_PAUSE_UNTIL)
+            .remove(KEY_VPN_PAUSE_TARGET)
+            .remove(KEY_VPN_PAUSE_LABEL)
+            .remove(KEY_VPN_PAUSE_SESSION)
+            .apply()
+        _vpnPause.value = null
+    }
+
     fun getLastUpstreamDns(): List<String> {
         val raw = prefs.getString(KEY_LAST_UPSTREAM_DNS, "") ?: ""
         return raw.split(",").filter { it.isNotBlank() }
@@ -160,6 +227,14 @@ class GlobalSettingsManager @Inject constructor(
         private const val KEY_GOAL_WALLPAPER_ENABLED = "goal_wallpaper_enabled"
         private const val KEY_GOAL_WALLPAPER_TARGET = "goal_wallpaper_target"
         private const val KEY_GOAL_WALLPAPER_TITLES = "goal_wallpaper_show_titles"
+        private const val KEY_VPN_PAUSE_UNTIL = "vpn_pause_until"
+        private const val KEY_VPN_PAUSE_TARGET = "vpn_pause_target"
+        private const val KEY_VPN_PAUSE_LABEL = "vpn_pause_label"
+        private const val KEY_VPN_PAUSE_SESSION = "vpn_pause_session"
+        private const val KEY_PAUSE_LAST_LOCK_MODE = "pause_last_lock_mode"
+        private const val KEY_PAUSE_LAST_TARGET = "pause_last_target"
+        private const val KEY_PAUSE_LAST_PLAIN_MIN = "pause_last_plain_minutes"
+        private const val KEY_PAUSE_LAST_LOCK_MIN = "pause_last_lock_minutes"
         private const val DEFAULT_CLICK_COUNT = 500
         const val MIN_CLICK_COUNT = 100
         const val MAX_CLICK_COUNT = 1000

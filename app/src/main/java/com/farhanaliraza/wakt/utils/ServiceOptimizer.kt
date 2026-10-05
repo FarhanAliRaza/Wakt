@@ -28,7 +28,8 @@ class ServiceOptimizer @Inject constructor(
     @ApplicationContext private val context: Context,
     private val blockedItemDao: BlockedItemDao,
     private val appBlockChecker: AppBlockChecker,
-    private val foregroundAppDetector: ForegroundAppDetector
+    private val foregroundAppDetector: ForegroundAppDetector,
+    private val globalSettingsManager: GlobalSettingsManager
 ) {
 
     fun optimizeServices() {
@@ -40,12 +41,16 @@ class ServiceOptimizer @Inject constructor(
                     it.type == BlockType.WEBSITE &&
                         (it.blockEndTime == null || it.blockEndTime!! > currentTime)
                 }
+                // A filter pause (phone locked to one VPN-averse app) keeps the
+                // VPN off until the pause ends; expired pauses read as null.
+                val paused = globalSettingsManager.getVpnPause(currentTime) != null
 
                 // DNS-only VPN: only DNS queries are routed through the TUN,
                 // so running it has no impact on throughput or battery.
-                if (hasWebsites) {
+                if (hasWebsites && !paused) {
                     startVpnServiceIfPossible()
                 } else {
+                    if (paused) Log.d("ServiceOptimizer", "Website filter paused, keeping VPN off")
                     stopVpnServiceIfRunning()
                 }
 

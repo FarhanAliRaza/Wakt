@@ -585,6 +585,15 @@ class BrickOverlayController(
                     }
                 )
 
+                // Apps allowed by this session specifically (e.g. the one app a
+                // website-filter pause is locked to) come first: the lock screen
+                // is the only way into them.
+                val sessionApps = brickSessionManager.getCurrentSession()?.allowedApps
+                    ?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() } ?: emptyList()
+                for (packageName in sessionApps) {
+                    tryAddAppIcon(container, packageName, displayedPackages)
+                }
+
                 for (packageName in globalSettingsManager.getDefaultAllowedApps()) {
                     tryAddAppIcon(container, packageName, displayedPackages)
                 }

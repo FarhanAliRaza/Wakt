@@ -9,6 +9,7 @@ import com.farhanaliraza.wakt.data.database.entity.BlockedItem
 import com.farhanaliraza.wakt.data.database.entity.BrickSessionType
 import com.farhanaliraza.wakt.data.database.entity.PhoneBrickSession
 import com.farhanaliraza.wakt.utils.BrickSessionManager
+import com.farhanaliraza.wakt.utils.FilterPauseManager
 import com.farhanaliraza.wakt.utils.GlobalSettingsManager
 import com.farhanaliraza.wakt.utils.PermissionHelper
 import com.farhanaliraza.wakt.utils.ServiceOptimizer
@@ -44,6 +45,7 @@ class LockViewModel @Inject constructor(
     private val brickSessionManager: BrickSessionManager,
     private val serviceOptimizer: ServiceOptimizer,
     private val globalSettingsManager: GlobalSettingsManager,
+    private val filterPauseManager: FilterPauseManager,
     @ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -249,6 +251,72 @@ class LockViewModel @Inject constructor(
         if (current.lockCommitmentPhrase != typedPhrase) return false
         blockedItemDao.unlockItem(current.id)
         return true
+    }
+
+    // ============== WEBSITE FILTER PAUSE ==============
+
+    /** Active filter pause (phone locked to one app with the VPN off), or null. */
+    val vpnPause: StateFlow<GlobalSettingsManager.VpnPause?> = globalSettingsManager.vpnPause
+
+    private val _pausableApps = MutableStateFlow<List<FilterPauseManager.PausableApp>>(emptyList())
+    val pausableApps: StateFlow<List<FilterPauseManager.PausableApp>> = _pausableApps.asStateFlow()
+    private val _pausableAppsLoading = MutableStateFlow(false)
+    val pausableAppsLoading: StateFlow<Boolean> = _pausableAppsLoading.asStateFlow()
+
+    /** Last mode, app and durations picked in the pause dialog. */
+    fun lastPauseChoice(): GlobalSettingsManager.PauseChoice = globalSettingsManager.getLastPauseChoice()
+
+    fun loadPausableApps() {
+        viewModelScope.launch {
+            _pausableAppsLoading.value = true
+            try {
+                _pausableApps.value = filterPauseManager.pausableApps()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Could not list apps: ${e.message}") }
+            } finally {
+                _pausableAppsLoading.value = false
+            }
+        }
+    }
+
+    /** Plain pause: filter off for a few minutes, nothing else changes. */
+    fun pauseFilter(minutes: Int) {
+        viewModelScope.launch {
+            try {
+                when (val result = filterPauseManager.pausePlain(minutes)) {
+                    is FilterPauseManager.PauseResult.Refused ->
+                        _uiState.update { it.copy(error = result.reason) }
+                    FilterPauseManager.PauseResult.Started -> Unit
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Could not pause the filter: ${e.message}") }
+            }
+        }
+    }
+
+    /** Pause tied to a phone lock that allows only [packageName]. */
+    fun pauseFilterFor(packageName: String, minutes: Int) {
+        viewModelScope.launch {
+            try {
+                when (val result = filterPauseManager.pauseForApp(packageName, minutes)) {
+                    is FilterPauseManager.PauseResult.Refused ->
+                        _uiState.update { it.copy(error = result.reason) }
+                    FilterPauseManager.PauseResult.Started -> Unit
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Could not pause the filter: ${e.message}") }
+            }
+        }
+    }
+
+    fun resumeFilterNow() {
+        viewModelScope.launch {
+            try {
+                filterPauseManager.resumeNow()
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Could not resume the filter: ${e.message}") }
+            }
+        }
     }
 
     // ============== PRIVATE SITE LIST ==============
