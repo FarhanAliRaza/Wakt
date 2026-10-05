@@ -81,6 +81,18 @@ class AddBlockViewModel @Inject constructor(
                             Log.e("AddBlockViewModel", "Error loading launcher apps", e)
                         }
 
+                        // Common "trap" apps can be blocked in advance, before they are
+                        // (re)installed. The block applies the moment the app appears.
+                        for ((pkg, label) in TRAP_APP_CATALOG) {
+                            if (allApps.containsKey(pkg)) continue
+                            allApps[pkg] = AppInfo(
+                                    name = "$label (not installed)",
+                                    packageName = pkg,
+                                    icon = null,
+                                    iconBitmap = null
+                            )
+                        }
+
                         val finalList = allApps.values.toList().sortedBy { it.name.lowercase() }
                         Log.d("AddBlockViewModel", "Found ${finalList.size} unique apps")
                         finalList
@@ -163,6 +175,34 @@ class AddBlockViewModel @Inject constructor(
         _uiState.update { it.copy(websiteUrl = url) }
     }
 
+    companion object {
+        /** Package name -> label of apps people most often want blocked, installed or not. */
+        private val TRAP_APP_CATALOG = listOf(
+                "com.instagram.android" to "Instagram",
+                "com.instagram.barcelona" to "Threads",
+                "com.zhiliaoapp.musically" to "TikTok",
+                "com.ss.android.ugc.trill" to "TikTok (Asia build)",
+                "com.facebook.katana" to "Facebook",
+                "com.facebook.lite" to "Facebook Lite",
+                "com.twitter.android" to "X (Twitter)",
+                "com.snapchat.android" to "Snapchat",
+                "com.google.android.youtube" to "YouTube",
+                "com.reddit.frontpage" to "Reddit",
+                "org.telegram.messenger" to "Telegram",
+                "com.discord" to "Discord",
+                "tv.twitch.android.app" to "Twitch",
+                "com.tumblr" to "Tumblr",
+                "com.pinterest" to "Pinterest",
+                "com.netflix.mediaclient" to "Netflix",
+                "video.like" to "Likee",
+                "sg.bigo.live" to "Bigo Live",
+                "com.kwai.video" to "Kwai",
+                "com.tinder" to "Tinder",
+                "com.bumble.app" to "Bumble",
+                "com.snackvideo.app" to "SnackVideo"
+        )
+    }
+
     private fun shouldIncludePackage(packageName: String): Boolean {
         val excludedPrefixes =
                 listOf(
@@ -216,9 +256,9 @@ class AddBlockViewModel @Inject constructor(
 
                 val blockedItem =
                         BlockedItem(
-                                name = state.websiteUrl,
+                                name = state.websiteUrl.trim().lowercase(),
                                 type = BlockType.WEBSITE,
-                                packageNameOrUrl = state.websiteUrl,
+                                packageNameOrUrl = state.websiteUrl.trim().lowercase(),
                                 challengeType = challengeType,
                                 challengeData = challengeData,
                                 blockDurationDays = 0,
