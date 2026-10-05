@@ -16,19 +16,23 @@ import androidx.compose.ui.unit.dp
 import com.farhanaliraza.wakt.utils.FilterPauseManager
 
 /**
- * Pick one app and a short duration to pause the website filter for. The pause
- * locks the phone to that app, so the dialog spells that out before confirming.
+ * Pause the website filter either plainly for a few minutes, or for longer
+ * with the phone locked to one chosen app. The lock variant needs an app pick;
+ * the plain variant just needs a duration.
  */
 @Composable
 fun FilterPauseDialog(
     apps: List<FilterPauseManager.PausableApp>,
     loading: Boolean,
-    onConfirm: (packageName: String, minutes: Int) -> Unit,
+    onConfirmPlain: (minutes: Int) -> Unit,
+    onConfirmLock: (packageName: String, minutes: Int) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var lockMode by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<FilterPauseManager.PausableApp?>(null) }
-    var minutes by remember { mutableIntStateOf(FilterPauseManager.DURATION_OPTIONS.first()) }
+    var plainMinutes by remember { mutableIntStateOf(2) }
+    var lockMinutes by remember { mutableIntStateOf(5) }
 
     val filtered = remember(apps, query) {
         val q = query.trim().lowercase()
@@ -37,82 +41,118 @@ fun FilterPauseDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Pause filter for one app") },
+        title = { Text("Pause website filter") },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "For banking apps that refuse to run with a VPN. The website filter turns " +
-                        "off and your phone locks to the app you pick. The filter comes back the moment " +
-                        "the lock ends, or earlier if you leave the lock.",
+                    text = "For banking apps that refuse to run while a VPN is on. The filter comes back on its own.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Text("Duration", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterPauseManager.DURATION_OPTIONS.forEach { option ->
-                        FilterChip(
-                            selected = minutes == option,
-                            onClick = { minutes = option },
-                            label = { Text("$option min") }
-                        )
-                    }
+                    FilterChip(
+                        selected = !lockMode,
+                        onClick = { lockMode = false },
+                        label = { Text("Just pause") }
+                    )
+                    FilterChip(
+                        selected = lockMode,
+                        onClick = { lockMode = true },
+                        label = { Text("Pause and lock to an app") }
+                    )
                 }
 
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text("Search apps") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
-                )
-
-                if (loading) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(120.dp),
-                        contentAlignment = Alignment.Center
-                    ) { CircularProgressIndicator() }
-                } else if (filtered.isEmpty()) {
+                if (!lockMode) {
                     Text(
-                        text = "No app matches. Browsers and blocked apps are never offered here.",
+                        text = "Up to ${FilterPauseManager.MAX_PLAIN_MINUTES} minutes, nothing else changes. " +
+                            "Short on purpose: enough for a payment, not enough to be worth abusing.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Text("Duration", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterPauseManager.PLAIN_DURATION_OPTIONS.forEach { option ->
+                            FilterChip(
+                                selected = plainMinutes == option,
+                                onClick = { plainMinutes = option },
+                                label = { Text("$option") }
+                            )
+                        }
+                    }
                 } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp)
-                    ) {
-                        items(filtered, key = { it.packageName }) { app ->
-                            val isSelected = selected?.packageName == app.packageName
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { selected = app }
-                                    .padding(vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RadioButton(selected = isSelected, onClick = { selected = app })
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = app.label,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = app.packageName,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
+                    Text(
+                        text = "Up to ${FilterPauseManager.MAX_LOCK_MINUTES} minutes. Your phone locks to the one app " +
+                            "you pick; leaving the lock early brings the filter back at once.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text("Duration", style = MaterialTheme.typography.labelLarge)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterPauseManager.LOCK_DURATION_OPTIONS.forEach { option ->
+                            FilterChip(
+                                selected = lockMinutes == option,
+                                onClick = { lockMinutes = option },
+                                label = { Text("$option") }
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("Search apps") },
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
+                    )
+
+                    if (loading) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(120.dp),
+                            contentAlignment = Alignment.Center
+                        ) { CircularProgressIndicator() }
+                    } else if (filtered.isEmpty()) {
+                        Text(
+                            text = "No app matches. Browsers and blocked apps are never offered here.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            items(filtered, key = { it.packageName }) { app ->
+                                val isSelected = selected?.packageName == app.packageName
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { selected = app }
+                                        .padding(vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(selected = isSelected, onClick = { selected = app })
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = app.label,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = app.packageName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -121,11 +161,17 @@ fun FilterPauseDialog(
             }
         },
         confirmButton = {
-            Button(
-                onClick = { selected?.let { onConfirm(it.packageName, minutes) } },
-                enabled = selected != null
-            ) {
-                Text(selected?.let { "Lock to ${it.label} for $minutes min" } ?: "Pick an app")
+            if (!lockMode) {
+                Button(onClick = { onConfirmPlain(plainMinutes) }) {
+                    Text("Pause for $plainMinutes min")
+                }
+            } else {
+                Button(
+                    onClick = { selected?.let { onConfirmLock(it.packageName, lockMinutes) } },
+                    enabled = selected != null
+                ) {
+                    Text(selected?.let { "Lock to ${it.label} for $lockMinutes min" } ?: "Pick an app")
+                }
             }
         },
         dismissButton = {

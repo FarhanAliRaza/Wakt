@@ -650,9 +650,9 @@ class BrickSessionManager @Inject constructor(
             // Stop overlay service
             com.farhanaliraza.wakt.services.BrickOverlayService.stop(context)
 
-            // A website-filter pause lives only as long as its lock: ending the
-            // lock (timer or early exit) brings the DNS filter straight back.
-            if (globalSettingsManager.getVpnPause() != null) {
+            // A locked website-filter pause lives only as long as its lock: ending
+            // the lock (timer or early exit) brings the DNS filter straight back.
+            if (globalSettingsManager.getVpnPause()?.locked == true) {
                 Log.i(TAG, "Lock ended, resuming website filter")
                 globalSettingsManager.clearVpnPause()
                 VpnResumeReceiver.cancel(context)

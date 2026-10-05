@@ -276,6 +276,22 @@ class LockViewModel @Inject constructor(
         }
     }
 
+    /** Plain pause: filter off for a few minutes, nothing else changes. */
+    fun pauseFilter(minutes: Int) {
+        viewModelScope.launch {
+            try {
+                when (val result = filterPauseManager.pausePlain(minutes)) {
+                    is FilterPauseManager.PauseResult.Refused ->
+                        _uiState.update { it.copy(error = result.reason) }
+                    FilterPauseManager.PauseResult.Started -> Unit
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(error = "Could not pause the filter: ${e.message}") }
+            }
+        }
+    }
+
+    /** Pause tied to a phone lock that allows only [packageName]. */
     fun pauseFilterFor(packageName: String, minutes: Int) {
         viewModelScope.launch {
             try {

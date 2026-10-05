@@ -19,7 +19,7 @@ import javax.inject.Singleton
 /**
  * Temporarily turns the DNS website filter off for one app without opening an
  * escape hatch: the pause is tied to a Phone lock in which only that app can be
- * used, lasts at most [MAX_MINUTES], and the filter restarts the moment the lock
+ * used, lasts at most [MAX_LOCK_MINUTES], and the filter restarts the moment the lock
  * ends, whether by timer or by an early exit ([BrickSessionManager.exitBrickMode]).
  *
  * Meant for banking apps that refuse to work while any VPN is active. Browsers
@@ -36,8 +36,12 @@ class FilterPauseManager @Inject constructor(
 ) {
     companion object {
         private const val TAG = "FilterPauseManager"
-        val DURATION_OPTIONS = listOf(5, 10, 15, 30)
-        const val MAX_MINUTES = 30
+        /** Durations offered for a pause that locks the phone to one app. */
+        val LOCK_DURATION_OPTIONS = listOf(1, 2, 5, 10, 15, 30)
+        const val MAX_LOCK_MINUTES = 30
+        /** Durations offered for a plain pause (no lock): short on purpose. */
+        val PLAIN_DURATION_OPTIONS = listOf(1, 2, 3, 5, 10)
+        const val MAX_PLAIN_MINUTES = 10
     }
 
     /** App that can be chosen as the target of a pause. */
@@ -86,12 +90,32 @@ class FilterPauseManager @Inject constructor(
     }
 
     /**
+     * Stops the filter for [minutes] (at most [MAX_PLAIN_MINUTES]) without any
+     * lock. The short cap is the friction: long enough to log in to a bank app,
+     * too short to be worth using as a way around the blocks.
+     */
+    suspend fun pausePlain(minutes: Int): PauseResult {
+        val duration = minutes.coerceIn(1, MAX_PLAIN_MINUTES)
+        if (globalSettingsManager.getVpnPause() != null) {
+            return PauseResult.Refused("The filter is already paused.")
+        }
+        val until = System.currentTimeMillis() + duration * 60_000L
+        globalSettingsManager.setVpnPause(
+            GlobalSettingsManager.VpnPause(until = until, targetPackage = "", targetLabel = "", sessionId = 0L)
+        )
+        VpnResumeReceiver.schedule(context, until)
+        serviceOptimizer.optimizeServices()
+        Log.i(TAG, "Website filter paused for $duration min (no lock)")
+        return PauseResult.Started
+    }
+
+    /**
      * Stops the filter and locks the phone to [packageName] for [minutes]. The
      * lock session is what keeps the pause honest, so the pause is refused when
      * a session cannot be started.
      */
     suspend fun pauseForApp(packageName: String, minutes: Int): PauseResult {
-        val duration = minutes.coerceIn(1, MAX_MINUTES)
+        val duration = minutes.coerceIn(1, MAX_LOCK_MINUTES)
         if (brickSessionManager.isPhoneBricked()) {
             return PauseResult.Refused("A lock is already running. Wait for it to end first.")
         }
@@ -146,7 +170,7 @@ class FilterPauseManager @Inject constructor(
     suspend fun resumeNow() {
         val pause = globalSettingsManager.getVpnPause()
         val current = brickSessionManager.getCurrentSession()
-        if (pause != null && current != null && current.id == pause.sessionId) {
+        if (pause != null && pause.locked && current != null && current.id == pause.sessionId) {
             // exitBrickMode clears the pause and re-optimizes services
             brickSessionManager.completeCurrentSession()
         } else {

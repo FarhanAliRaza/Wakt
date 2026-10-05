@@ -104,11 +104,14 @@ class GlobalSettingsManager @Inject constructor(
     // ============== WEBSITE FILTER PAUSE ==============
 
     /**
-     * A temporary pause of the DNS website filter so one app (typically a banking
-     * app that refuses to run with a VPN) can be used. While it is in force the
-     * phone is locked to [targetPackage] by brick session [sessionId].
+     * A temporary pause of the DNS website filter so a banking app that refuses
+     * to run with a VPN can be used. Either a short plain pause ([sessionId] is
+     * 0) or one tied to brick session [sessionId] that locks the phone to
+     * [targetPackage] for its duration.
      */
-    data class VpnPause(val until: Long, val targetPackage: String, val targetLabel: String, val sessionId: Long)
+    data class VpnPause(val until: Long, val targetPackage: String, val targetLabel: String, val sessionId: Long) {
+        val locked: Boolean get() = sessionId != 0L
+    }
 
     private val _vpnPause = MutableStateFlow(getVpnPause())
     val vpnPause: StateFlow<VpnPause?> = _vpnPause.asStateFlow()
@@ -117,7 +120,7 @@ class GlobalSettingsManager @Inject constructor(
     fun getVpnPause(now: Long = System.currentTimeMillis()): VpnPause? {
         val until = prefs.getLong(KEY_VPN_PAUSE_UNTIL, 0L)
         if (until <= now) return null
-        val target = prefs.getString(KEY_VPN_PAUSE_TARGET, null) ?: return null
+        val target = prefs.getString(KEY_VPN_PAUSE_TARGET, "") ?: ""
         return VpnPause(
             until = until,
             targetPackage = target,

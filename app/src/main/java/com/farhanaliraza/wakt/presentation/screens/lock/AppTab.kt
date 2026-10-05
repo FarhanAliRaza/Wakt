@@ -198,7 +198,11 @@ fun AppTab(
         FilterPauseDialog(
             apps = pausableApps,
             loading = pausableAppsLoading,
-            onConfirm = { packageName, minutes ->
+            onConfirmPlain = { minutes ->
+                showPauseDialog = false
+                viewModel.pauseFilter(minutes)
+            },
+            onConfirmLock = { packageName, minutes ->
                 showPauseDialog = false
                 viewModel.pauseFilterFor(packageName, minutes)
             },
@@ -417,13 +421,18 @@ private fun WebsiteFilterStatus(
             Column(modifier = Modifier.weight(1f)) {
                 if (pause != null) {
                     Text(
-                        text = "Website filter: paused for ${pause.targetLabel}",
+                        text = if (pause.locked) "Website filter: paused for ${pause.targetLabel}"
+                               else "Website filter: paused until ${formatTime(pause.until)}",
                         style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.tertiary
                     )
                     Text(
-                        text = "Phone is locked to that app until ${formatTime(pause.until)}. " +
-                            "The filter comes back on its own when the lock ends.",
+                        text = if (pause.locked) {
+                            "Phone is locked to that app until ${formatTime(pause.until)}. " +
+                                "The filter comes back on its own when the lock ends."
+                        } else {
+                            "The filter comes back on its own at ${formatTime(pause.until)}."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
