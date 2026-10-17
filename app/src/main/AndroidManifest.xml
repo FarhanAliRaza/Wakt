@@ -171,6 +171,21 @@
             android:enabled="true"
             android:exported="false" />
 
+        <!-- Uninstall and force-stop protection: an active device admin cannot be
+             force stopped from App Info and cannot be uninstalled until deactivated -->
+        <receiver
+            android:name=".receivers.WaktDeviceAdminReceiver"
+            android:description="@string/device_admin_description"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Restores the DNS filter and enforcement after reboot or app update -->
         <receiver
             android:name=".receivers.BootReceiver"

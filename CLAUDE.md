@@ -162,6 +162,13 @@ accessibility service is enabled (see `PermissionHelper`):
   When connected, the enforcement service hands app blocks over to it.
 - Always: QUERY_ALL_PACKAGES (app selector), FOREGROUND_SERVICE*, RECEIVE_BOOT_COMPLETED
   (`BootReceiver` restores services), BIND_VPN_SERVICE (DNS website filter).
+- **Force stop protection (optional):** `WaktDeviceAdminReceiver` registers Wakt as
+  a device admin with no policies (`res/xml/device_admin.xml`). While active,
+  Android greys out "Force stop" on Wakt's App Info page and refuses to uninstall
+  it. Offered in onboarding and Settings; `PermissionHelper.removeDeviceAdmin`
+  must only be offered while no commitment lock, lock session or locked filter
+  pause is running (`SettingsViewModel.commitmentActive`). Deactivation from
+  system Settings cannot be prevented; `onDisableRequested` only adds a warning.
 
 `ServiceOptimizer.optimizeServices()` is the single place that decides which
 background services should run; call it after anything that changes blocks or

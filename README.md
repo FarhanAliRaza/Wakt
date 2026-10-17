@@ -48,6 +48,7 @@ The app requires these permissions to function:
 | Permission | Purpose |
 |------------|---------|
 | Accessibility Service | Detect foreground apps and browser URLs |
+| Device admin (optional) | Stops Wakt from being force stopped or uninstalled while locks run; requests no policies |
 | Display over other apps | Show blocking overlay |
 | Usage Stats | Backup app detection method |
 

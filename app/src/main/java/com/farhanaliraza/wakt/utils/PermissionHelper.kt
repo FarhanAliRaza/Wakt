@@ -2,6 +2,7 @@ package com.farhanaliraza.wakt.utils
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.app.AppOpsManager
+import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.view.accessibility.AccessibilityManager
+import com.farhanaliraza.wakt.receivers.WaktDeviceAdminReceiver
 import com.farhanaliraza.wakt.services.AppBlockingService
 
 /**
@@ -60,6 +62,51 @@ object PermissionHelper {
         val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
         context.startActivity(intent)
+    }
+
+    // ============== UNINSTALL / FORCE-STOP PROTECTION (device admin) ==============
+
+    /** Wakt is an active device admin: Force stop is greyed out and Uninstall refused. */
+    fun isDeviceAdminActive(context: Context): Boolean {
+        return try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            dpm.isAdminActive(WaktDeviceAdminReceiver.componentName(context))
+        } catch (e: Exception) {
+            Log.e("PermissionHelper", "Error checking device admin", e)
+            false
+        }
+    }
+
+    /** Opens the system's "Activate device admin" screen for Wakt. */
+    fun requestDeviceAdmin(context: Context) {
+        val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+            putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, WaktDeviceAdminReceiver.componentName(context))
+            putExtra(
+                DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                "Keeps Wakt running: Android will no longer let you force stop or uninstall it " +
+                    "until this is turned off again. Wakt asks for no device policies."
+            )
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+        try {
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e("PermissionHelper", "Could not open device admin activation", e)
+        }
+    }
+
+    /**
+     * Deactivates Wakt's device admin. Callers must only offer this while no
+     * commitment lock or lock session is running; the system itself cannot
+     * tell the two situations apart.
+     */
+    fun removeDeviceAdmin(context: Context) {
+        try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            dpm.removeActiveAdmin(WaktDeviceAdminReceiver.componentName(context))
+        } catch (e: Exception) {
+            Log.e("PermissionHelper", "Could not remove device admin", e)
+        }
     }
 
     /**

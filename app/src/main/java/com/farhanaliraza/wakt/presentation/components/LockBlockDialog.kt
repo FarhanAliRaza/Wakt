@@ -152,7 +152,7 @@ fun LockBlockDialog(
                         )
                     ) {
                         Text(
-                            text = "No way out: this lock only ends when the time is over. Short of uninstalling Wakt, nothing can remove these blocks before then.",
+                            text = "No way out: this lock only ends when the time is over. Nothing can remove these blocks before then. Turn on Force Stop Protection in Settings so force stopping or uninstalling Wakt is not a way out either.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             modifier = Modifier.padding(12.dp)

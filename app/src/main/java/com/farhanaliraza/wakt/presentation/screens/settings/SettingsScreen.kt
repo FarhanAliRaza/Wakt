@@ -34,6 +34,8 @@ import com.farhanaliraza.wakt.presentation.components.PinDialog
 import com.farhanaliraza.wakt.presentation.components.SetPinDialog
 import com.farhanaliraza.wakt.utils.PermissionHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -45,6 +47,8 @@ fun SettingsScreen(
     val emergencyExitEnabled by viewModel.emergencyExitEnabled.collectAsState()
     val vpnExcludedApps by viewModel.vpnExcludedApps.collectAsState()
     val sitesPinSet by viewModel.sitesPinSet.collectAsState()
+    val commitmentActive by viewModel.commitmentActive.collectAsState()
+    val scope = rememberCoroutineScope()
     var showSetPinDialog by remember { mutableStateOf(false) }
     var showRemovePinDialog by remember { mutableStateOf(false) }
     var showChangePinDialog by remember { mutableStateOf(false) }
@@ -62,6 +66,7 @@ fun SettingsScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 permissionRefresh++
                 viewModel.refreshServices()
+                viewModel.refreshCommitmentState()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -70,6 +75,7 @@ fun SettingsScreen(
     val usageAccessGranted = remember(permissionRefresh) { PermissionHelper.isUsageAccessGranted(context) }
     val overlayGranted = remember(permissionRefresh) { PermissionHelper.isOverlayPermissionGranted(context) }
     val accessibilityEnabled = remember(permissionRefresh) { PermissionHelper.isAccessibilityServiceEnabled(context) }
+    val deviceAdminActive = remember(permissionRefresh) { PermissionHelper.isDeviceAdminActive(context) }
 
     Column(
         modifier = Modifier
@@ -184,6 +190,71 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Uninstall / force-stop protection card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Force Stop Protection",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Text(
+                    text = "Force stopping Wakt from its App Info page kills every block and lock " +
+                        "at once. Registering Wakt as a device admin makes Android grey out " +
+                        "Force stop and refuse Uninstall until the protection is turned off. " +
+                        "Wakt asks for no device policies: it cannot lock, wipe or watch your phone.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                PermissionStatusRow(
+                    title = "Device admin",
+                    subtitle = when {
+                        !deviceAdminActive -> "Wakt can be force stopped and uninstalled"
+                        commitmentActive -> "Protected. Can be turned off once your lock ends."
+                        else -> "Protected against force stop and uninstall"
+                    },
+                    granted = deviceAdminActive,
+                    actionLabel = if (deviceAdminActive) "Turn off" else "Turn on",
+                    actionEnabled = !deviceAdminActive || !commitmentActive,
+                    onAction = {
+                        if (deviceAdminActive) {
+                            PermissionHelper.removeDeviceAdmin(context)
+                            // Deactivation completes asynchronously; re-read the status shortly after
+                            scope.launch {
+                                delay(600)
+                                permissionRefresh++
+                            }
+                        } else {
+                            PermissionHelper.requestDeviceAdmin(context)
+                        }
+                    }
+                )
+
+                if (deviceAdminActive && commitmentActive) {
+                    Text(
+                        text = "A commitment lock, lock session or locked filter pause is running. " +
+                            "The protection stays on until it ends.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -591,7 +662,8 @@ private fun PermissionStatusRow(
     subtitle: String,
     granted: Boolean,
     actionLabel: String,
-    onAction: () -> Unit
+    onAction: () -> Unit,
+    actionEnabled: Boolean = true
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -620,10 +692,10 @@ private fun PermissionStatusRow(
             )
             if (actionLabel == "Turn off") {
                 Spacer(modifier = Modifier.width(8.dp))
-                TextButton(onClick = onAction) { Text(actionLabel) }
+                TextButton(onClick = onAction, enabled = actionEnabled) { Text(actionLabel) }
             }
         } else {
-            Button(onClick = onAction) { Text(actionLabel) }
+            Button(onClick = onAction, enabled = actionEnabled) { Text(actionLabel) }
         }
     }
 }
