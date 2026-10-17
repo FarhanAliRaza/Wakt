@@ -29,7 +29,7 @@ import com.farhanaliraza.wakt.utils.PermissionHelper
 import kotlinx.coroutines.launch
 
 /** What a permission page needs to show and do. */
-private enum class PermissionKind { USAGE_ACCESS, OVERLAY, BATTERY, ACCESSIBILITY }
+private enum class PermissionKind { USAGE_ACCESS, OVERLAY, BATTERY, DEVICE_ADMIN, ACCESSIBILITY }
 
 private data class OnboardingPage(
     val illustration: Int,
@@ -82,6 +82,14 @@ private val pages = listOf(
         why = "Wakt's background work is tiny: a once-a-second check of the current app during sessions, and a local DNS filter for websites that handles only DNS. It does not drain the battery."
     ),
     OnboardingPage(
+        illustration = R.drawable.onb_shield,
+        title = "Force stop protection (optional)",
+        body = "Force stopping Wakt from its App Info page would end every block and lock at once. As a device admin, Wakt cannot be force stopped or uninstalled until you turn this off. You can skip this.",
+        permission = PermissionKind.DEVICE_ADMIN,
+        optional = true,
+        why = "Wakt asks for no device policies: it cannot lock, wipe or watch your phone. The only effect is that Android greys out Force stop and Uninstall. You can turn it off in Settings whenever no lock is running."
+    ),
+    OnboardingPage(
         illustration = R.drawable.onb_accessibility,
         title = "Accessibility Service (optional)",
         body = "Turns blocking from \"within a second\" into instant, and adds website blocking inside browsers. You can skip this.",
@@ -119,6 +127,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                 PermissionKind.USAGE_ACCESS -> PermissionHelper.isUsageAccessGranted(context)
                 PermissionKind.OVERLAY -> PermissionHelper.isOverlayPermissionGranted(context)
                 PermissionKind.BATTERY -> PermissionHelper.isBatteryOptimizationDisabled(context)
+                PermissionKind.DEVICE_ADMIN -> PermissionHelper.isDeviceAdminActive(context)
                 PermissionKind.ACCESSIBILITY -> PermissionHelper.isAccessibilityServiceEnabled(context)
             }
         }
@@ -144,6 +153,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                         PermissionKind.USAGE_ACCESS -> PermissionHelper.requestUsageAccessPermission(context)
                         PermissionKind.OVERLAY -> PermissionHelper.requestOverlayPermission(context)
                         PermissionKind.BATTERY -> PermissionHelper.requestBatteryOptimizationExemption(context)
+                        PermissionKind.DEVICE_ADMIN -> PermissionHelper.requestDeviceAdmin(context)
                         PermissionKind.ACCESSIBILITY -> PermissionHelper.requestAccessibilityPermission(context)
                         null -> {}
                     }

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Wakt asks for no device policies. Being an active device admin is enough:
+     Android then greys out "Force stop" on Wakt's App Info page and refuses
+     to uninstall Wakt until the admin is deactivated. -->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>
