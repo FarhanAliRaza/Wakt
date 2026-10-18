@@ -9,7 +9,7 @@ Wakt is an Android digital wellness app that blocks distracting apps and website
 ### Tech Stack
 - Language: Kotlin
 - Build System: Gradle with Kotlin DSL
-- Min SDK: 24 (Android 7.0), Target SDK: 35
+- Min SDK: 24 (Android 7.0), Target SDK: 36
 - UI: Jetpack Compose (screens) + Android Views (overlays)
 - DI: Hilt
 - Database: Room with migrations (currently v6)
