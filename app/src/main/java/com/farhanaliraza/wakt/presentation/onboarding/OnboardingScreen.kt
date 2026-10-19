@@ -228,6 +228,8 @@ private fun OnboardingPageContent(
     granted: Boolean?,
     onGrant: () -> Unit
 ) {
+    // Whether the user already tapped the grant button on this page
+    var requested by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -299,7 +301,7 @@ private fun OnboardingPageContent(
                             modifier = Modifier.weight(1f)
                         )
                         if (!isGranted) {
-                            Button(onClick = onGrant, shape = RoundedCornerShape(10.dp)) {
+                            Button(onClick = { requested = true; onGrant() }, shape = RoundedCornerShape(10.dp)) {
                                 Text(if (page.optional) "Turn on" else "Grant")
                             }
                         }
@@ -318,6 +320,17 @@ private fun OnboardingPageContent(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+                    if (page.permission == PermissionKind.DEVICE_ADMIN && !isGranted && requested) {
+                        val context = LocalContext.current
+                        Text(
+                            text = PermissionHelper.RESTRICTED_SETTINGS_HINT,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(onClick = { PermissionHelper.openAppInfo(context) }) {
+                            Text("Open App info")
                         }
                     }
                 }

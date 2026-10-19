@@ -76,6 +76,8 @@ fun SettingsScreen(
     val overlayGranted = remember(permissionRefresh) { PermissionHelper.isOverlayPermissionGranted(context) }
     val accessibilityEnabled = remember(permissionRefresh) { PermissionHelper.isAccessibilityServiceEnabled(context) }
     val deviceAdminActive = remember(permissionRefresh) { PermissionHelper.isDeviceAdminActive(context) }
+    // Set when the user asked for device admin; shows the restricted-settings hint if it did not stick
+    var deviceAdminRequested by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -243,10 +245,22 @@ fun SettingsScreen(
                                 permissionRefresh++
                             }
                         } else {
+                            deviceAdminRequested = true
                             PermissionHelper.requestDeviceAdmin(context)
                         }
                     }
                 )
+
+                if (deviceAdminRequested && !deviceAdminActive) {
+                    Text(
+                        text = PermissionHelper.RESTRICTED_SETTINGS_HINT,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { PermissionHelper.openAppInfo(context) }) {
+                        Text("Open App info")
+                    }
+                }
 
                 if (deviceAdminActive && commitmentActive) {
                     Text(

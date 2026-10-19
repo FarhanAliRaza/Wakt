@@ -77,7 +77,15 @@ object PermissionHelper {
         }
     }
 
-    /** Opens the system's "Activate device admin" screen for Wakt. */
+    /**
+     * Opens the system's "Activate device admin" screen for Wakt.
+     *
+     * On Android 13+ an app installed from outside an app store (Wakt ships as a
+     * GitHub APK) may be sent to its App Info page or shown a "Restricted setting"
+     * dialog instead. The user then has to pick "Allow restricted settings" from
+     * the App Info overflow menu once; see [openAppInfo] and
+     * [RESTRICTED_SETTINGS_HINT].
+     */
     fun requestDeviceAdmin(context: Context) {
         val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, WaktDeviceAdminReceiver.componentName(context))
@@ -91,9 +99,36 @@ object PermissionHelper {
         try {
             context.startActivity(intent)
         } catch (e: Exception) {
-            Log.e("PermissionHelper", "Could not open device admin activation", e)
+            Log.e("PermissionHelper", "Could not open device admin activation, falling back to security settings", e)
+            try {
+                context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                })
+            } catch (e2: Exception) {
+                Log.e("PermissionHelper", "Could not open security settings", e2)
+            }
         }
     }
+
+    /** Opens Wakt's own App Info page (where "Allow restricted settings" lives). */
+    fun openAppInfo(context: Context) {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:${context.packageName}")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e("PermissionHelper", "Could not open app info", e)
+        }
+    }
+
+    /** Shown when the device admin screen did not appear or activation was refused. */
+    const val RESTRICTED_SETTINGS_HINT =
+        "Did Android open a different page or say the setting is restricted? " +
+            "For apps installed outside an app store, Android hides this behind " +
+            "\"Restricted settings\". Open Wakt's App info, tap the three dots at the " +
+            "top right, choose \"Allow restricted settings\", then tap Turn on again."
 
     /**
      * Deactivates Wakt's device admin. Callers must only offer this while no
