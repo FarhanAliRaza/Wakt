@@ -80,13 +80,18 @@ object PermissionHelper {
     /**
      * Opens the system's "Activate device admin" screen for Wakt.
      *
-     * On Android 13+ an app installed from outside an app store (Wakt ships as a
-     * GitHub APK) may be sent to its App Info page or shown a "Restricted setting"
-     * dialog instead. The user then has to pick "Allow restricted settings" from
-     * the App Info overflow menu once; see [openAppInfo] and
-     * [RESTRICTED_SETTINGS_HINT].
+     * The system activity refuses to start as a new task ("Cannot start
+     * ADD_DEVICE_ADMIN as a new task" in Settings' DeviceAdminAdd) and finishes
+     * at once, which brings whatever Settings page was open last back to the
+     * front. So, unlike the other permission requests here, this one must be
+     * started from an Activity without FLAG_ACTIVITY_NEW_TASK.
      */
     fun requestDeviceAdmin(context: Context) {
+        val activity = findActivity(context)
+        if (activity == null) {
+            Log.e("PermissionHelper", "Device admin activation needs an Activity context")
+            return
+        }
         val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
             putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, WaktDeviceAdminReceiver.componentName(context))
             putExtra(
@@ -94,20 +99,26 @@ object PermissionHelper {
                 "Keeps Wakt running: Android will no longer let you force stop or uninstall it " +
                     "until this is turned off again. Wakt asks for no device policies."
             )
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         try {
-            context.startActivity(intent)
+            activity.startActivity(intent)
         } catch (e: Exception) {
             Log.e("PermissionHelper", "Could not open device admin activation, falling back to security settings", e)
             try {
-                context.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                })
+                activity.startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS))
             } catch (e2: Exception) {
                 Log.e("PermissionHelper", "Could not open security settings", e2)
             }
         }
+    }
+
+    private fun findActivity(context: Context): android.app.Activity? {
+        var current: Context? = context
+        while (current is android.content.ContextWrapper) {
+            if (current is android.app.Activity) return current
+            current = current.baseContext
+        }
+        return null
     }
 
     /** Opens Wakt's own App Info page (where "Allow restricted settings" lives). */
@@ -125,10 +136,10 @@ object PermissionHelper {
 
     /** Shown when the device admin screen did not appear or activation was refused. */
     const val RESTRICTED_SETTINGS_HINT =
-        "Did Android open a different page or say the setting is restricted? " +
-            "For apps installed outside an app store, Android hides this behind " +
-            "\"Restricted settings\". Open Wakt's App info, tap the three dots at the " +
-            "top right, choose \"Allow restricted settings\", then tap Turn on again."
+        "If Android said this setting is restricted: for apps installed outside an " +
+            "app store it is hidden behind \"Restricted settings\". Open Wakt's App info, " +
+            "tap the three dots at the top right, choose \"Allow restricted settings\", " +
+            "then tap Turn on again."
 
     /**
      * Deactivates Wakt's device admin. Callers must only offer this while no
